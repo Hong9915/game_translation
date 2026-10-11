@@ -1,0 +1,47 @@
+/* 프리텐다드: 애플 SF Pro에 맞춰 만든 한국어 글꼴. 가변 글꼴이라 굵기마다 파일을 따로 받지 않는다. */
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-canvas text-ink font-sans text-[13px] antialiased;
+}
+
+@layer base {
+  /* 자간은 크기마다 다르다 — 큰 제목만 좁히고 본문은 그대로 둔다 */
+  h1 { letter-spacing: -0.02em; }
+  h2 { letter-spacing: -0.01em; }
+}
+
+@layer components {
+  /* 누르는 순간(손 떼기 전) 살짝 들어간다 */
+  .press { transition: transform 100ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out, border-color 150ms ease-out; }
+  .press:active:not(:disabled) { transform: scale(0.97); }
+
+  /* 뿌연 유리: 아래로 지나가는 내용이 비친다. 떠 있는 메뉴·창에만 쓴다.
+     표 제목 줄(th)에는 쓰지 않는다 — 표 칸에서는 흐림이 안 먹어 스크롤한 행 글자가 그대로 비친다. */
+  .glass { background-color: rgb(255 255 255 / 0.78); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); }
+
+  /* 메뉴·창: 부른 자리에서 작게 시작해 커진다. transform-origin은 쓰는 곳에서 정한다. */
+  .pop-in { animation: pop-in 150ms cubic-bezier(0.2, 0, 0, 1) both; }
+  .fade-in { animation: fade-in 150ms ease-out both; }
+}
+
+@keyframes pop-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* 동작 줄이기: 커지기·눌림 대신 짧게 나타나기만 */
+@media (prefers-reduced-motion: reduce) {
+  .pop-in { animation-name: fade-in; }
+  .press:active:not(:disabled) { transform: none; }
+  .lift:hover { transform: none; }
+}
+/* 투명도 줄이기: 유리를 불투명하게 */
+@media (prefers-reduced-transparency: reduce) {
+  .glass { background-color: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+/* 대비 높이기: 유리 대신 단색 + 뚜렷한 테두리 */
+@media (prefers-contrast: more) {
+  .glass { background-color: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; border-color: #1a1f26; }
+}

@@ -1,0 +1,97 @@
+package com.gametrans.translate;
+
+import com.gametrans.game.Game;
+import com.gametrans.game.GameService;
+import com.gametrans.glossary.EffectiveGlossary;
+import com.gametrans.glossary.GlossaryEntry;
+import com.gametrans.glossary.GlossaryPrompt;
+import com.gametrans.llm.LlmClient;
+import com.gametrans.llm.LlmClient.Reference;
+import com.gametrans.llm.LlmClient.TranslateBatchRequest;
+import com.gametrans.llm.LlmClient.TranslateRow;
+import com.gametrans.llm.LlmClient.TranslationResult;
+import com.gametrans.memory.MemoryService;
+import com.gametrans.text.GlossaryCheck;
+import com.gametrans.text.PlaceholderCheck;
+import com.gametrans.translate.TranslateDtos.QuickTranslateRequest;
+import com.gametrans.translate.TranslateDtos.QuickTranslateResult;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import org.springframework.stereotype.Service;
+
+/**
+ * 파일 없이 문장 하나를 그 게임의 단어장·공용 용어집·번역 메모리에 맞춰 번역한다.
+ * 작업·세그먼트·수정본을 만들지 않고, 결과를 메모리에 저장하지도 않는다(검수를 거치지 않은 문장이므로).
+ * 검수 화면의 행 번역(RowTranslateService)도 GPT 호출은 이 클래스의 translateOne을 거친다.
+ */
+@Service
+public class QuickTranslateService {
+    static final int MAX_CHARS = 2000;
+    private static final String INDEX = "1";
+
+    private final GameService games;
+    private final MemoryService memory;
+    private final LlmClient llm;
+    private final EffectiveGlossary effective;
+
+    public QuickTranslateService(GameService games, MemoryService memory, LlmClient llm, EffectiveGlossary effective) {
+        this.games = games;
+        this.memory = memory;
+        this.llm = llm;
+        this.effective = effective;
+    }
+
+    public QuickTranslateResult translate(Long gameId, QuickTranslateRequest req) {
+        Game game = games.get(gameId);
+        String cn = req.text() == null ? "" : req.text().trim();
+        if (cn.isEmpty()) throw new IllegalArgumentException("번역할 문장을 입력하세요.");
+        if (cn.length() > MAX_CHARS) throw new IllegalArgumentException("한 번에 " + MAX_CHARS + "자까지 번역할 수 있습니다.");
+        String en = req.en() == null || req.en().isBlank() ? null : req.en().trim();
+        return translateOne(game, cn, en, req.basis(), req.instructions(), true);
+    }
+
+    /**
+     * 문장 하나를 GPT로 번역한다. 용어집은 구 공용 용어(memory.termsIn)에 게임의 유효 단어장(SRC·ko 있음)을 얹은 것 — 같은 원문이면 단어장이 이긴다 —
+     * 가운데 이 원문에 실제로 걸리는 항목만 보낸다. 단어장의 메모 전용 항목은 원문에 find가 있을 때만 메모를 지시문 뒤에 붙인다.
+     * useMemory가 true면 메모리에 원문이 완전히 같은 문장이 있고 지금 용어집과도 맞을 때 GPT 없이 그 문장을 돌려준다.
+     */
+    public QuickTranslateResult translateOne(Game game, String cn, String en, String basisParam, String instructions, boolean useMemory) {
+        Terms terms = termsFor(game, cn);
+        Map<String, String> glossary = terms.glossary();
+        Map<String, String> withNotes = terms.withNotes();
+        String fullInstructions = GlossaryPrompt.instructions(instructions, terms.notes());
+        MemoryService.Lookup mem = memory.lookupGame(game.getName());
+
+        // 파일 번역과 같은 규칙: 원문이 완전히 같고 지금 용어집과도 맞으면 GPT 없이 메모리 문장을 쓴다
+        String remembered = useMemory ? mem.exact(cn) : null;
+        if (remembered != null && PlaceholderCheck.matches(cn, remembered) && GlossaryCheck.missing(cn, remembered, glossary).isEmpty())
+            return new QuickTranslateResult(remembered, "MEMORY", glossary, List.of(), List.of(), true);
+
+        List<Reference> refs = mem.references(List.of(cn));
+        String basis = "CN_ONLY".equals(basisParam) ? "CN_ONLY" : "EN_FIRST";
+        String ko = null;
+        for (TranslationResult r : llm.translateBatch(new TranslateBatchRequest(basis, fullInstructions, withNotes, List.of(new TranslateRow(INDEX, cn, en)), refs)))
+            if (INDEX.equals(r.index()) && r.ko() != null && !r.ko().isBlank()) ko = r.ko().trim();
+        if (ko == null) throw new IllegalStateException("GPT가 번역을 돌려주지 않았습니다. 다시 시도하세요.");
+        return new QuickTranslateResult(ko, "LLM", glossary, refs, GlossaryCheck.missing(cn, ko, glossary), PlaceholderCheck.matches(cn, ko));
+    }
+
+    /** glossary: 이 원문에 걸리는 용어(메모 뗀 번역어). withNotes: 같은 항목을 메모째(GPT용). notes: 원문에 find가 있는 단어장 메모 전용 항목의 메모. */
+    public record Terms(Map<String, String> glossary, Map<String, String> withNotes, List<String> notes) {}
+
+    /**
+     * 구 공용 용어(memory.termsIn)에 게임의 유효 단어장(SRC·ko 있음)을 얹은 것 — 같은 원문이면 단어장이 이긴다 — 가운데
+     * 이 원문에 실제로 걸리는 항목. 행 줄이기(RowShortenService)도 같은 용어를 쓴다.
+     */
+    public Terms termsFor(Game game, String cn) {
+        List<GlossaryEntry> entries = effective.of(game.getId());
+        Map<String, String> merged = GlossaryPrompt.merge(memory.termsIn(game.getName(), cn), GlossaryPrompt.srcTerms(entries));
+        // 겹치는 용어는 긴 쪽만 보낸다. 짧은 쪽까지 보내면 GPT가 서로 어긋나는 두 번역을 받는다
+        Map<String, String> glossary = GlossaryCheck.applicable(cn, merged);
+        // GPT에는 같은 항목을 메모째 보낸다(applicable은 메모를 뗀 번역어를 돌려준다). 화면에 돌려주는 용어집은 메모 없는 쪽.
+        Map<String, String> withNotes = new LinkedHashMap<>();
+        for (String term : glossary.keySet()) withNotes.put(term, merged.get(term).trim());
+        return new Terms(glossary, withNotes, GlossaryPrompt.memoNotes(entries, cn));
+    }
+}

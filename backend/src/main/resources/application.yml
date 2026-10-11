@@ -1,0 +1,50 @@
+spring:
+  datasource:
+    url: ${SUPABASE_DB_URL:jdbc:postgresql://localhost:5432/gametrans}
+    username: ${SUPABASE_DB_USER:postgres}
+    password: ${SUPABASE_DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  task:
+    scheduling:
+      # 주기 작업이 하나(presence 만료)뿐이라도 스레드 하나는 그 하나가 늦어지면 전부 멈춘다.
+      pool:
+        size: 2
+  servlet:
+    multipart:
+      max-file-size: ${UPLOAD_MAX_MB:50}MB
+      max-request-size: ${UPLOAD_MAX_MB:50}MB
+
+app:
+  # 표기 갈림 카드의 참고 직역(중→한). 비면 직역을 띄우지 않는다. API Free 키는 ":fx"로 끝난다.
+  deepl:
+    auth-key: ${DEEPL_AUTH_KEY:}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    model: ${OPENAI_MODEL:gpt-5}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    # gpt-5 계열 추론 강도. minimal|low|medium|high. 추론이 길수록 느리다. 비추론 모델(gpt-4.1 등)이면 빈 값으로.
+    reasoning-effort: ${OPENAI_REASONING_EFFORT:low}
+    # 고유명사 추출·후보 추천처럼 단순한 단계용 가벼운 모델. 비우면 model과 같은 모델을 쓴다.
+    light-model: ${OPENAI_MODEL_LIGHT:gpt-5-mini}
+    light-reasoning-effort: ${OPENAI_REASONING_EFFORT_LIGHT:minimal}
+    # 비용 추정용 단가(백만 토큰당 USD, 입력/출력). OpenAI 가격표와 맞춰 둔다.
+    prices: ${OPENAI_PRICES:gpt-5=1.25/10,gpt-5-mini=0.25/2,gpt-5-nano=0.05/0.4,gpt-4.1=2/8,gpt-4.1-mini=0.4/1.6}
+  storage:
+    type: ${STORAGE_TYPE:local}
+    local-dir: ${STORAGE_LOCAL_DIR:./data}
+    supabase-url: ${SUPABASE_URL:}
+    supabase-service-key: ${SUPABASE_SERVICE_KEY:}
+    supabase-bucket: ${SUPABASE_STORAGE_BUCKET:xlsx}
+  translate:
+    batch-size: ${TRANSLATE_BATCH_SIZE:30}
+    length-ratio-default: ${LENGTH_RATIO_DEFAULT:1.0}
+  upload-max-mb: ${UPLOAD_MAX_MB:50}
+  llm-concurrency: ${LLM_CONCURRENCY:8}
+  cors-origins: ${CORS_ORIGINS:http://localhost:5173}
+  josa:
+    # 조사 검사 보조 컨테이너(설계 2026-10-07). 비우면 검사를 안 한다(저장은 그대로 된다).
+    url: ${JOSA_URL:}
+    scheduled: true

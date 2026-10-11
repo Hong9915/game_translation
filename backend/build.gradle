@@ -1,0 +1,46 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.3.4'
+	id 'io.spring.dependency-management' version '1.1.6'
+}
+
+group = 'com.gametrans'
+version = '0.0.1-SNAPSHOT'
+
+// Override Spring Boot 3.3.4's managed Testcontainers version (1.19.8): that release's
+// docker-java hardcodes Docker API v1.24 for its initial handshake, which current Docker
+// Desktop engines (min supported API 1.40) reject with HTTP 400. 1.21.4 negotiates correctly.
+ext['testcontainers.version'] = '1.21.4'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(17)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.flywaydb:flyway-core'
+	implementation 'org.flywaydb:flyway-database-postgresql'
+	implementation 'org.apache.poi:poi-ooxml:5.3.0'
+	// 중국어 분절기(오프라인, 사전 내장). 3단계에서 반복 명사구 후보를 뽑는 데 쓴다.
+	implementation 'com.huaban:jieba-analysis:1.0.2'
+	runtimeOnly 'org.postgresql:postgresql'
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	testImplementation 'org.testcontainers:junit-jupiter'
+	testImplementation 'org.testcontainers:postgresql'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}

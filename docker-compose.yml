@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gametrans
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gametrans"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    # OPENAI_API_KEY 등 비밀값은 .env(.local)에서. 뒤에 오는 파일이 앞을 덮어쓴다.
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
+    # 아래 값은 env 파일보다 우선. 컨테이너 안에서는 DB 호스트가 postgres 서비스명.
+    environment:
+      SUPABASE_DB_URL: jdbc:postgresql://postgres:5432/gametrans
+      SUPABASE_DB_USER: postgres
+      SUPABASE_DB_PASSWORD: postgres
+      STORAGE_TYPE: ${STORAGE_TYPE:-local}
+      STORAGE_LOCAL_DIR: /data
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      JOSA_URL: http://josa:8000
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend/data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # 조사 검사(Kiwi, 설계 2026-10-07). 백엔드만 부른다. 죽어도 번역 저장은 막히지 않는다.
+  josa:
+    build: ./josa
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:

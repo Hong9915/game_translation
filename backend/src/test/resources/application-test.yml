@@ -1,0 +1,10 @@
+app:
+  openai:
+    api-key: test-key
+    prices: gpt-5=1.25/10,gpt-5-mini=0.25/2
+  storage:
+    type: local
+    local-dir: build/test-data
+  llm-concurrency: 1   # FakeLlmClient는 스레드 안전하지 않다
+  josa:
+    scheduled: false   # 테스트는 JosaCheckJob.runOnce()를 직접 부른다
