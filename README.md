@@ -4,10 +4,10 @@
 파일을 올리면 엑셀처럼 생긴 화면에서 원문·기존 번역·고친 번역을 나란히 보고, 용어 통일·조사·띄어쓰기 같은
 반복 수정은 도구와 GPT에 맡긴 뒤, 원본 형식 그대로 한국어 열이 채워진 xlsx를 내려받는다.
 
-```
-게임 고르기 ─▶ 파일 올리기(xlsx·csv, 폴더째) ─▶ 열 정하기(원문·한국어 열) ─▶ 엑셀식 검수 ─▶ 내보내기(xlsx)
-                                                                         │
-                                       단어장 · 표기 갈림 · 조사 검사 · 명령으로 고치기 · 변경 내역
+```mermaid
+flowchart LR
+  A[게임 고르기] --> B["파일 올리기<br/>xlsx·csv, 폴더째"] --> C["열 정하기<br/>원문·한국어 열"] --> D[엑셀식 검수] --> E["내보내기<br/>xlsx·zip"]
+  D -.- T["단어장 · 표기 갈림 · 조사 검사<br/>명령으로 고치기 · 변경 내역"]
 ```
 
 ## 무엇을 할 수 있나
@@ -42,13 +42,16 @@
 
 ## 구성
 
-```
-                                          ┌──▶ PostgreSQL 16   모든 데이터 (Flyway V1–V30)
- 브라우저 ──▶ nginx ──/api──▶ Spring Boot ├──▶ DeepL Pro       기본 번역 (단어장 용어집 · 게임별 지시문)
-    ▲        HTTPS·비밀번호   (backend)   ├──▶ OpenAI          명령으로 고치기 · 길이 줄이기 · 단어장 초안
-    │                            │        ├──▶ josa 사이드카  조사 검사 (Python · Kiwi, 내부망)
-    │                            │        └──▶ 파일 저장소     올린 원본 파일 (STORAGE_TYPE=local)
-    └──────── SSE ───────────────┘  다른 사람이 고친 칸 · 작업 진행률
+```mermaid
+flowchart LR
+  U[브라우저<br/>React 19] -->|요청| N["nginx<br/>HTTPS · 팀 비밀번호"]
+  N -->|/api| B["Spring Boot 백엔드<br/>검수 API · 작업 실행기 · xlsx"]
+  B -->|모든 데이터| P[("PostgreSQL 16<br/>Flyway V1–V30")]
+  B ==>|기본 번역| D["DeepL Pro<br/>단어장 용어집 · 게임별 지시문"]
+  B -->|명령으로 고치기 · 길이 줄이기 · 단어장 초안| O[OpenAI<br/>gpt-5 · gpt-5-mini]
+  B -->|조사 검사 · 내부망| J["josa 사이드카<br/>Python · Kiwi"]
+  B -->|원본 보관| S[("파일 저장소<br/>STORAGE_TYPE=local")]
+  B -.->|SSE: 다른 사람이 고친 칸 · 작업 진행률| U
 ```
 
 운영에서는 nginx만 밖으로 열린다. 백엔드·DB 포트는 열지 않고, josa는 백엔드만 컨테이너 네트워크 안에서 부른다.
@@ -62,16 +65,16 @@
 
 ### 파일 한 개의 흐름
 
-```
-업로드      원본 파일 보관                                project · storage
-  ▼
-열 정하기   열 쌍 → segments 행                           normalize · xlsx
-  ▼
-번역        빈 한국어 채움  ◀── 단어장 (DeepL 용어집)     job · translate · deepl
-  ▼
-검수        고친 한국어·표시 ──▶ 변경 내역 · 수정 이력    workspace · review · command · josa · activity
-  ▼
-내보내기    .xlsx · .zip     ──▶ 번역 메모리              export · xlsx
+```mermaid
+flowchart TD
+  U["업로드 → 원본 파일<br/><code>project · storage</code>"] --> N["열 정하기 → segments 행<br/><code>normalize · xlsx</code>"]
+  N --> T["번역 → 빈 한국어 채움<br/><code>job · translate · deepl</code>"]
+  T --> R["검수 → 고친 한국어 · 표시<br/><code>workspace · review · command · josa · activity</code>"]
+  R --> E["내보내기 → .xlsx · .zip<br/><code>export · xlsx</code>"]
+  G[("단어장<br/><code>glossary</code>")] -->|DeepL 용어집| T
+  G -->|일괄 적용 · 불일치 필터| R
+  R -->|변경 내역 · 수정 이력| H[("기록")]
+  E -->|최종 문장| M[("번역 메모리<br/><code>memory</code>")]
 ```
 
 모든 단계가 같은 `segments` 행을 읽고 쓴다. 검수 단계의 일괄 수정(명령으로 고치기·조사 맞추기·단어장 적용)은 확정된 행을 건너뛰고,
