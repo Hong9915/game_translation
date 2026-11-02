@@ -94,7 +94,8 @@ public class CommandAgent {
     private List<ToolLoop.Tool> tools(List<SheetRow> rows, Pipeline.Sidecar sidecar, AtomicReference<List<OpSpec>> lastWorking) {
         // 작업 하나(OpSpec)의 JSON Schema — try_ops와 finish의 ops 인자가 이 꼴의 배열이다.
         Map<String, Object> op = Map.of("type", "object", "properties", Map.of(
-                "kind", Map.of("type", "string", "enum", List.of(OpSpec.REPLACE, OpSpec.TAG_SPACING, OpSpec.JOSA, OpSpec.UNIFY_SAME_SOURCE)),
+                "kind", Map.of("type", "string", "enum", List.of(OpSpec.REPLACE, OpSpec.TAG_SPACING, OpSpec.JOSA, OpSpec.UNIFY_SAME_SOURCE, OpSpec.TERM)),
+                "src", Map.of("type", "string"), "ko", Map.of("type", "string"),
                 "filter", Map.of("type", List.of("object", "null"), "properties", Map.of(
                         "in", Map.of("type", "string", "enum", List.of("ko", "src")), "contains", Map.of("type", "string"))),
                 "steps", Map.of("type", "array", "items", Map.of("type", "object", "properties", Map.of(
@@ -147,7 +148,18 @@ public class CommandAgent {
 
     private String tryOps(List<SheetRow> rows, Pipeline.Sidecar sidecar, JsonNode a, AtomicReference<List<OpSpec>> lastWorking) {
         List<OpSpec> tried = ops(a.path("ops"));
-        List<Pipeline.Change> changes = Pipeline.compile(tried).run(rows, null, sidecar);
+        Pipeline pipeline = Pipeline.compile(tried);
+        OpSpec term = pipeline.term();
+        if (term != null) {
+            // 용어 바꾸기는 행마다 GPT를 부르므로 시험에서는 돌리지 않는다 — 대상 행 수와 지금 번역 예시만 돌려준다
+            List<SheetRow> hit = rows.stream().filter(r -> TermSwap.target(r, term.src(), term.ko())).toList();
+            if (!hit.isEmpty()) lastWorking.set(tried);
+            List<Map<String, Object>> examples = hit.stream().limit(EXAMPLES)
+                    .map(r -> Map.<String, Object>of("src", cut(r.src()), "ko", cut(r.ko()))).toList();
+            return json(Map.of("rowsToRewrite", hit.size(), "examples", examples,
+                    "note", "Each of these rows is rewritten by GPT when the preview is made. Call finish with this op."));
+        }
+        List<Pipeline.Change> changes = pipeline.run(rows, null, sidecar);
         if (!changes.isEmpty()) lastWorking.set(tried);
         Map<String, Integer> byOp = new LinkedHashMap<>(), warnings = new LinkedHashMap<>();
         List<String> warningExamples = new ArrayList<>();

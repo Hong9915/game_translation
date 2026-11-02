@@ -74,6 +74,18 @@ class BulkMarksTest extends IntegrationTest {
     }
 
     @Test
+    void searchInExistingKoScopesTheWholeView() throws Exception {
+        long pid = normalized(TestProjects.freshGame());
+        String word = rows(pid).stream().map(Segment::getExistingKoText).filter(t -> t != null && t.length() >= 2).findFirst().orElseThrow().substring(0, 2);
+        bulk(pid, "{\"sheet\":\"Skill\",\"q\":\"" + word + "\",\"qIn\":\"EXISTING_KO\",\"needsCheck\":true}").andExpect(status().isOk());
+
+        for (Segment s : rows(pid)) assertThat(s.isNeedsCheck()).as(s.getSrcText())
+                .isEqualTo(s.getExistingKoText() != null && s.getExistingKoText().contains(word));
+        // 원문에 있는 말은 기존 한국어 검색에 안 걸린다
+        bulk(pid, "{\"sheet\":\"Skill\",\"q\":\"伤害\",\"qIn\":\"EXISTING_KO\",\"review1\":true}").andExpect(jsonPath("$.updated").value(0));
+    }
+
+    @Test
     void dupConflictFilterMatchesTheList() throws Exception {
         String game = TestProjects.freshGame();
         long a = normalized(game);

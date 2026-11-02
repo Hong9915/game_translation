@@ -35,15 +35,12 @@ class QuickTranslateControllerTest extends IntegrationTest {
         fake = (FakeLlmClient) llm;
         fake.translateCalls.clear();
         fake.translations.clear();
-        fake.termsToReturn = List.of(new LlmClient.TermExtraction("霜语者", "CHARACTER"));
         projectId = TestProjects.upload(mvc, "한 문장 " + System.nanoTime());
         gameId = JsonPath.parse(mvc.perform(get("/api/projects/{id}", projectId)).andReturn().getResponse().getContentAsString()).read("$.gameId", Long.class);
         TestProjects.normalize(mvc, projectId);
-        mvc.perform(post("/api/projects/{id}/terms/extract", projectId)).andExpect(status().isOk());
-        String body = mvc.perform(get("/api/projects/{id}/terms", projectId)).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        List<?> ids = JsonPath.parse(body).read("$.terms[?(@.srcText=='霜语者')].id", List.class);
-        mvc.perform(patch("/api/terms/{id}", ((Number) ids.get(0)).longValue()).contentType(MediaType.APPLICATION_JSON)
-                .content("{\"confirmedKo\":\"서리속삭임\",\"confirmed\":true}")).andExpect(status().isOk());
+        // 게임 단어장에 霜语者 → 서리속삭임
+        mvc.perform(post("/api/games/{id}/glossary", gameId).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"kind\":\"SRC\",\"matchMode\":\"PARTIAL\",\"find\":\"霜语者\",\"ko\":\"서리속삭임\"}")).andExpect(status().isOk());
     }
 
     private static String json(String text) { return "{\"text\":\"" + text + "\"}"; }

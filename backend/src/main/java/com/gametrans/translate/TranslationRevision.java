@@ -19,7 +19,8 @@ public class TranslationRevision {
     /** EXISTING: 올린 파일의 한국어 열에 이미 있던 문장(정규화 때 0차로 들어감). */
     /** MEMORY: 같은 게임의 번역 메모리에서 원문이 완전히 같은 문장을 가져옴(GPT 호출 없음). */
     /** LLM_PROOFREAD: 교정 모드에서 GPT가 기존 한국어의 틀린 곳을 고친 판. */
-    public enum Author { LLM, HUMAN, LLM_SHORTEN, GLOSSARY, EXISTING, MEMORY, LLM_PROOFREAD }
+    /** IMPORTED: 최종 리뷰 버전으로 정규화할 때 파일의 수정 한국어 열에서 읽은 문장(사람이 이미 고친 것으로 본다). */
+    public enum Author { LLM, HUMAN, LLM_SHORTEN, GLOSSARY, EXISTING, MEMORY, LLM_PROOFREAD, DEEPL, IMPORTED }
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

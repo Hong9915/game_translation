@@ -5,10 +5,10 @@ import { applyMarks, patchRows, rollbackMarks, rowFromSegment, withMarksOf } fro
 const jimin = { id: 7, name: '지민', color: '#0c8599' }
 const row = (id: number, over: Partial<WorkspaceRow> = {}): WorkspaceRow => ({
   id, rowNo: id + 1, pairIndex: 0, indexLabel: `UI!${id + 1}`, keyText: `K${id}`, src: '确认', en: 'Confirm', existingKo: '확인', fix: '확인',
-  changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0, ...over,
+  changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, finalReview: false, finalMark: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0, ...over,
 })
 const seg = (id: number, over: Partial<SegmentRow> = {}): SegmentRow => ({
-  id, indexLabel: `UI!${id + 1}`, srcText: '确认', enText: 'Confirm', isTerm: false, currentText: '확인', lenKo: 2, lenSrc: 2, flagged: false,
+  id, indexLabel: `UI!${id + 1}`, srcText: '确认', enText: 'Confirm', currentText: '확인', lenKo: 2, lenSrc: 2, flagged: false,
   history: [{ version: 0, author: 'EXISTING', text: '확인', createdAt: '2026-09-23T00:00:00Z' }], ...over,
 })
 const data = (): WorkspaceRowsResponse => ({ rows: [row(1), row(2)], page: 0, size: 500, total: 2 })
@@ -56,6 +56,14 @@ describe('patchRows', () => {
     const cleared = patchRows(out, { type: 'marks', by: 7, segmentIds: [1], review1: null, review2: null, needsCheck: null, confirmed: null, note: null, noteChanged: true })
     expect(cleared.rows[0].note).toBeNull()
     expect(patchRows(d, { type: 'marks', by: 7, segmentIds: [99], review1: true, review2: true, needsCheck: null, confirmed: null, note: null, noteChanged: false })).toBe(d)
+  })
+  it('applies a finalMark marks event and keeps finalMark from a marks response', () => {
+    const d: WorkspaceRowsResponse = { ...data(), rows: [row(1, { finalReview: true, finalMark: false }), row(2)] }
+    const out = patchRows(d, { type: 'marks', by: 7, segmentIds: [1], review1: null, review2: null, needsCheck: null, confirmed: null, finalMark: true, note: null, noteChanged: false })
+    expect(out.rows[0].finalMark).toBe(true)
+    expect(withMarksOf(row(1, { finalMark: false }), row(1, { finalMark: true })).finalMark).toBe(true)
+    const prev = row(1, { finalMark: false })
+    expect(rollbackMarks(applyMarks(prev, { finalMark: true }), prev, { finalMark: true }).finalMark).toBe(false)
   })
   it('ignores presence and refresh', () => {
     const d = data()

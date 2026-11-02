@@ -10,7 +10,6 @@ import com.gametrans.FakeLlmClient;
 import com.gametrans.IntegrationTest;
 import com.gametrans.TestProjects;
 import com.gametrans.llm.LlmClient;
-import com.gametrans.memory.GameTermRepository;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,7 +20,6 @@ import org.springframework.test.web.servlet.MockMvc;
 class ReviewControllerTest extends IntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired LlmClient llm;
-    @Autowired GameTermRepository gameTerms;
 
     @BeforeEach
     void setUp() {
@@ -136,30 +134,5 @@ class ReviewControllerTest extends IntegrationTest {
                 .andExpect(jsonPath("$.rows[1].flagged").value(false))
                 .andExpect(jsonPath("$.rows[1].currentText").value("화염검"))
                 .andExpect(jsonPath("$.rows[1].history[-1:].author").value("HUMAN"));
-    }
-
-    @Test
-    void editingTermRowUpdatesTheTermAndGameGlossary() throws Exception {
-        String game = TestProjects.freshGame();
-        long pid = TestProjects.upload(mvc, game);
-        TestProjects.normalize(mvc, pid);
-        mvc.perform(post("/api/projects/{id}/terms", pid).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"srcText\":\"烈焰之剑\",\"type\":\"ITEM\",\"confirmedKo\":\"화염의 검\"}"))
-                .andExpect(status().isCreated());
-        String list = mvc.perform(get("/api/projects/{id}/segments", pid)).andReturn().getResponse().getContentAsString();
-        long sid = ((Number) JsonPath.parse(list).read("$.rows[0].id")).longValue();
-
-        mvc.perform(put("/api/segments/{id}/translation", sid).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"text\":\"불꽃검\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.propagated").value(0))
-                .andExpect(jsonPath("$.row.isTerm").value(true))
-                .andExpect(jsonPath("$.row.currentText").value("불꽃검"))
-                .andExpect(jsonPath("$.row.history[-1:].author").value("GLOSSARY"));
-
-        mvc.perform(get("/api/projects/{id}/terms", pid).param("q", "烈焰之剑"))
-                .andExpect(jsonPath("$.terms[0].confirmedKo").value("불꽃검"))
-                .andExpect(jsonPath("$.terms[0].confirmed").value(true));
-        org.junit.jupiter.api.Assertions.assertEquals("불꽃검", gameTerms.findByGameNameAndSrcText(game, "烈焰之剑").orElseThrow().getKo());
     }
 }

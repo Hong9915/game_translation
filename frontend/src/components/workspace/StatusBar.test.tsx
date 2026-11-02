@@ -112,4 +112,11 @@ describe('StatusBar', () => {
       vi.useRealTimers()
     }
   })
+
+  it('최종 리뷰 시트면 최종 수정 수를 보인다', () => {
+    const { rerender } = render(<StatusBar summary={{ ...summary, finalMark: 12 }} sheet="UI" selection="" saveState="saved" />)
+    expect(screen.queryByText(/최종 수정 12/)).toBeNull()
+    rerender(<StatusBar summary={{ ...summary, finalMark: 12 }} sheet="UI" selection="" saveState="saved" finalReview />)
+    expect(screen.getByText(/최종 수정 12/)).toBeInTheDocument()
+  })
 })

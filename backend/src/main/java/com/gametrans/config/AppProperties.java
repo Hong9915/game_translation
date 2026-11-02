@@ -12,5 +12,8 @@ public record AppProperties(OpenAi openai, Storage storage, Translate translate,
         public String lightModelOrDefault() { return lightModel == null || lightModel.isBlank() ? model : lightModel; }
     }
     public record Storage(String type, String localDir, String supabaseUrl, String supabaseServiceKey, String supabaseBucket) {}
-    public record Translate(int batchSize, double lengthRatioDefault) {}
+    /** engine: "deepl"(기본) | "gpt". 번역(파일·빠른·행)에 쓸 엔진 — 용어 고치기·명령·줄이기·교정은 늘 GPT. */
+    public record Translate(int batchSize, double lengthRatioDefault, String engine) {
+        public boolean deepl() { return engine == null || engine.isBlank() || "deepl".equalsIgnoreCase(engine.trim()); }
+    }
 }

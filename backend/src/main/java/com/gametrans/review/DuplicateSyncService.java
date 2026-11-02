@@ -36,7 +36,7 @@ public class DuplicateSyncService {
         if (src == null || src.isBlank() || text == null || text.isBlank()) return 0;
         Long gameId = projects.findById(saved.getProjectId()).map(Project::getGame).map(g -> g.getId()).orElse(null);
         if (gameId == null) return 0;
-        List<Segment> same = segments.findSameSourceInGame(gameId, src, saved.getId());
+        List<Segment> same = segments.findSameSourceInGame(gameId, saved.isFinalReview(), src, saved.getId());
         return writer.write(same, s -> text, reviewerId, activityFor);
     }
 }

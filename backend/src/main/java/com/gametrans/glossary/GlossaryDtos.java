@@ -26,9 +26,8 @@ public final class GlossaryDtos {
     /**
      * 단어장 추천 한 줄. sentences = 그 구절이 든 서로 다른 문장 수(숫자만 다른 행은 한 문장, 순위 기준),
      * rows = 원문에 그 구절이 든 행 수, renderings = 그 행들의 한국어에서 찾은 지금 번역(많아야 3개, 없으면 빈 목록),
-     * termKo = 옛 파이프라인 용어집(game_term)에 같은 원문이 있으면 그 번역.
      */
-    public record Recommendation(String find, int sentences, int rows, java.util.List<Rendering> renderings, String termKo) {}
+    public record Recommendation(String find, int sentences, int rows, java.util.List<Rendering> renderings) {}
 
     /** 표기 갈림 예문 한 쌍(긴 문장은 잘라 보낸다). */
     public record VariantExample(String src, String ko) {}

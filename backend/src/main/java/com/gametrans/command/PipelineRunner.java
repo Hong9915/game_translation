@@ -1,5 +1,7 @@
 package com.gametrans.command;
 
+import com.gametrans.workspace.SheetScope;
+
 import com.gametrans.common.NotFoundException;
 import com.gametrans.josa.JosaClient;
 import com.gametrans.josa.JosaHint;
@@ -32,6 +34,20 @@ public class PipelineRunner {
         this.projects = projects;
         this.live = live;
         this.josa = josa;
+    }
+
+    /** 범위의 행(게임 순서)과 행마다 어느 (파일, 시트)인지. */
+    public record ScopeRows(List<SheetRow> rows, java.util.Map<Long, SheetScope.SheetRef> where) {
+        public SheetScope.SheetRef refOf(Long id) { return where.get(id); }
+    }
+
+    public ScopeRows rows(SheetScope scope) {
+        List<SheetRow> rows = new ArrayList<>();
+        java.util.Map<Long, SheetScope.SheetRef> where = new java.util.HashMap<>();
+        for (SheetScope.SheetRef r : scope.sheets()) {
+            for (SheetRow row : rows(r.projectId(), r.sheet())) { rows.add(row); where.put(row.id(), r); }
+        }
+        return new ScopeRows(rows, where);
     }
 
     public List<SheetRow> rows(Long projectId, String sheet) {

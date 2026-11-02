@@ -20,27 +20,42 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/projects")
 public class ProjectController {
     private final ProjectService service;
+    private final com.gametrans.normalize.NormalizeConfigRepository configs;
 
-    public ProjectController(ProjectService service) { this.service = service; }
+    public ProjectController(ProjectService service, com.gametrans.normalize.NormalizeConfigRepository configs) {
+        this.service = service;
+        this.configs = configs;
+    }
+
+    /** 최종 리뷰 버전으로 정규화한 시트가 있는 파일 id(목록 한 번에 설정을 한 번만 읽는다). */
+    private java.util.Set<Long> finalReviewIds(java.util.Collection<Long> projectIds) {
+        if (projectIds.isEmpty()) return java.util.Set.of();
+        return configs.findByProjectIdIn(projectIds).stream().filter(com.gametrans.normalize.NormalizeConfig::isFinalReview)
+                .map(com.gametrans.normalize.NormalizeConfig::getProjectId).collect(java.util.stream.Collectors.toSet());
+    }
+
+    private ProjectDto dto(Project p) { return ProjectDto.of(p, !finalReviewIds(List.of(p.getId())).isEmpty()); }
 
     @PostMapping
     public ResponseEntity<ProjectDto> upload(@RequestParam("file") MultipartFile file,
                                              @RequestParam(value = "gameId", required = false) Long gameId,
                                              @RequestParam(value = "gameName", required = false) String gameName,
                                              @RequestParam(value = "reviewOnly", required = false) Boolean reviewOnly) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(ProjectDto.of(service.upload(file, gameId, gameName, Boolean.TRUE.equals(reviewOnly))));
+        return ResponseEntity.status(HttpStatus.CREATED).body(ProjectDto.of(service.upload(file, gameId, gameName, Boolean.TRUE.equals(reviewOnly)), false));
     }
 
     @GetMapping
     public List<ProjectDto> list(@RequestParam(value = "gameId", required = false) Long gameId) {
-        return service.list(gameId).stream().map(ProjectDto::of).toList();
+        List<Project> ps = service.list(gameId);
+        java.util.Set<Long> fin = finalReviewIds(ps.stream().map(Project::getId).toList());
+        return ps.stream().map(p -> ProjectDto.of(p, fin.contains(p.getId()))).toList();
     }
 
     @GetMapping("/{id}")
-    public ProjectDto get(@PathVariable Long id) { return ProjectDto.of(service.get(id)); }
+    public ProjectDto get(@PathVariable Long id) { return dto(service.get(id)); }
 
     @PatchMapping("/{id}")
-    public ProjectDto patch(@PathVariable Long id, @RequestBody ProjectPatch patch) { return ProjectDto.of(service.patch(id, patch)); }
+    public ProjectDto patch(@PathVariable Long id, @RequestBody ProjectPatch patch) { return dto(service.patch(id, patch)); }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {

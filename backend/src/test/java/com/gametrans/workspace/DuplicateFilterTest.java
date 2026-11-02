@@ -133,6 +133,13 @@ class DuplicateFilterTest extends IntegrationTest {
         mvc.perform(get("/api/review/{id}/rows", a).param("sheet", "Skill").param("filter", "DUP_CONFLICT").param("q", "없는말"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(0));
+        // 기존 한국어에서 찾기 — 네이티브 쿼리도 같은 칸을 본다: 옛 표기는 걸리고 바뀐 Fix의 말은 안 걸린다
+        mvc.perform(get("/api/review/{id}/rows", a).param("sheet", "Skill").param("filter", "DUP_CONFLICT").param("q", "심판").param("qIn", "EXISTING_KO"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1));
+        mvc.perform(get("/api/review/{id}/rows", a).param("sheet", "Skill").param("filter", "DUP_CONFLICT").param("q", "판결").param("qIn", "EXISTING_KO"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
     }
 
     @Test
@@ -154,5 +161,59 @@ class DuplicateFilterTest extends IntegrationTest {
         mvc.perform(get("/api/review/{id}/rows", b).param("sheet", "Skill"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.rows[?(@.rowNo==7)].dupCount").value(0));
+    }
+
+    @Test
+    void sourceExactSearchMatchesOnlyTheWholeSource() throws Exception {
+        String game = TestProjects.freshGame();
+        long a = normalizedSameSourceTwice(game);
+        // Fix에 원문 글자가 들어 있어도 모아 보기에는 안 걸린다
+        mvc.perform(put("/api/segments/{id}/translation", row(a, 4).getId()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\":\"正义裁决\"}"));
+
+        mvc.perform(get("/api/review/{id}/rows", a).param("sheet", "Skill").param("q", "正义裁决").param("qIn", "SRC_EXACT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.rows[0].rowNo").value(2))
+                .andExpect(jsonPath("$.rows[1].rowNo").value(6));
+        // 원문 일부만으로는 안 걸린다
+        mvc.perform(get("/api/review/{id}/rows", a).param("sheet", "Skill").param("q", "正义").param("qIn", "SRC_EXACT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
+    }
+
+    @Test
+    void sourceContainsSearchLooksOnlyAtTheSource() throws Exception {
+        String game = TestProjects.freshGame();
+        long a = normalizedSameSourceTwice(game);
+        // Fix에만 든 글자는 안 걸린다 — 원문 일부로는 걸린다
+        mvc.perform(put("/api/segments/{id}/translation", row(a, 4).getId()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\":\"正义\"}"));
+
+        mvc.perform(get("/api/review/{id}/rows", a).param("sheet", "Skill").param("q", "正义").param("qIn", "SRC_CONTAINS"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.rows[0].rowNo").value(2))
+                .andExpect(jsonPath("$.rows[1].rowNo").value(6));
+        mvc.perform(get("/api/review/{id}/rows", a).param("sheet", "Skill").param("filter", "DUP_CONFLICT").param("q", "正义").param("qIn", "SRC_CONTAINS"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void dupConflictComposesWithSourceExactSearch() throws Exception {
+        String game = TestProjects.freshGame();
+        long a = normalized(game);
+        long b = normalized(game);
+        // b를 확정으로 잠가 a의 수정이 같은 원문 반영으로 b에 퍼지지 않게 한다 — 그래야 갈림이 생긴다
+        mvc.perform(put("/api/segments/{id}/marks", row(b, 2).getId()).contentType(MediaType.APPLICATION_JSON).content("{\"confirmed\":true}"));
+        mvc.perform(put("/api/segments/{id}/translation", row(a, 2).getId()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\":\"정의의 판결\"}"));
+
+        mvc.perform(get("/api/review/{id}/rows", a).param("sheet", "Skill").param("filter", "DUP_CONFLICT").param("q", "正义裁决").param("qIn", "SRC_EXACT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1));
+        mvc.perform(get("/api/review/{id}/rows", a).param("sheet", "Skill").param("filter", "DUP_CONFLICT").param("q", "正义").param("qIn", "SRC_EXACT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
     }
 }

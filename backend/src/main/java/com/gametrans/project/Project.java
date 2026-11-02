@@ -30,6 +30,8 @@ public class Project {
     private int currentStep = 1;
     /** 검수 전용: 한국어 열이 이미 있는 파일. 정규화 → 검수 → 내보내기만 거치고 용어·번역 단계는 건너뛴다. */
     private boolean reviewOnly = false;
+    /** 이 파일에서 마지막으로 고른 번역 원문 언어(V25). "ZH" | "EN". 행 번역이 따른다. */
+    private String translateSourceLang = "ZH";
 
     /** 공용 용어집·번역 메모리가 묶이는 키. */
     public String getGameName() { return game.getName(); }

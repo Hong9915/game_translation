@@ -4,6 +4,7 @@ import com.gametrans.config.Paging;
 import com.gametrans.review.TermMissService;
 import com.gametrans.workspace.WorkspaceDtos.RowFilter;
 import com.gametrans.workspace.WorkspaceDtos.RowsResponse;
+import com.gametrans.workspace.WorkspaceDtos.SearchIn;
 import com.gametrans.workspace.WorkspaceDtos.Summary;
 import org.springframework.web.bind.annotation.GetMapping;
 import java.util.Map;
@@ -22,9 +23,11 @@ public class WorkspaceController {
     private final TermMissService termMiss;
     private final com.gametrans.review.ReviewMarkService marks;
     private final RowHistoryService history;
+    private final SheetScopes scopes;
 
     public WorkspaceController(WorkspaceService service, TermMissService termMiss, com.gametrans.review.ReviewMarkService marks,
-                               RowHistoryService history) {
+                               RowHistoryService history, SheetScopes scopes) {
+        this.scopes = scopes;
         this.service = service;
         this.history = history;
         this.termMiss = termMiss;
@@ -38,10 +41,11 @@ public class WorkspaceController {
                              @RequestParam(required = false) String sheet,
                              @RequestParam(required = false) RowFilter filter,
                              @RequestParam(required = false) String q,
+                             @RequestParam(required = false) SearchIn qIn,
                              @RequestParam(required = false) Integer page,
                              @RequestParam(required = false) Integer size,
                              @RequestHeader(value = "X-Reviewer-Id", required = false) Long reviewerId) {
-        return service.rows(projectId, sheet, filter, q, reviewerId, Paging.page(page), size == null ? 500 : Paging.size(size));
+        return service.rows(scopes.single(projectId, sheet), filter, q, qIn, reviewerId, Paging.page(page), size == null ? 500 : Paging.size(size));
     }
 
     @GetMapping("/rows/summary")

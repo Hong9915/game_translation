@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 여러 행의 Fix를 한 트랜잭션으로 바꾸고 행마다 리비전을 남긴다.
- * 동일 원문 통일과 단어장 일괄 적용이 공유한다. 완료·제외·용어 행은 부르는 쪽에서 이미 걸러 온다.
+ * 동일 원문 통일과 단어장 일괄 적용이 공유한다. 완료·제외 행은 부르는 쪽에서 이미 걸러 온다.
  */
 @Component
 public class BulkFixWriter {

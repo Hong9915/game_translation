@@ -10,7 +10,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** 게임 하나. 파일(프로젝트)들이 여기에 속하고, 공용 용어집·번역 메모리는 이름으로 묶인다. */
+/** 게임 하나. 파일(프로젝트)들이 여기에 속하고, 번역 메모리는 이름으로 묶인다. */
 @Entity
 @Table(name = "game")
 @Getter @Setter @NoArgsConstructor
@@ -18,5 +18,7 @@ public class Game {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     private String name;
+    /** DeepL 지시문(custom_instructions). 한 줄이 지시 하나. 비면 보내지 않는다. 새 게임은 기본 지시문으로 시작한다. */
+    private String deeplInstructions = DeepLInstructions.DEFAULT;
     private Instant createdAt = Instant.now();
 }

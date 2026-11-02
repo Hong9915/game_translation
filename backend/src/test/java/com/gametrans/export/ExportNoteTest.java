@@ -100,6 +100,18 @@ class ExportNoteTest extends IntegrationTest {
     }
 
     @Test
+    void theGameZipLeavesTheNoteColumnOut() throws Exception {
+        long pid = twoPairs();
+        note(seg(pid, 2, 0), "메모");
+        byte[] body = mvc.perform(post("/api/projects/{id}/export", pid).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"addFlagColumn\":false,\"addHistorySheet\":false,\"addGlossarySheet\":false,\"ratio\":1.0,\"addNoteColumn\":false}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(body))) {
+            assertThat(text(wb.getSheet("Skill").getRow(0), 7)).isNull();
+        }
+    }
+
+    @Test
     void thePreviewShowsTheNoteColumn() throws Exception {
         long pid = twoPairs();
         note(seg(pid, 2, 1), "설명 길이");

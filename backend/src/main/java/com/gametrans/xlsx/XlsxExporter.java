@@ -19,16 +19,23 @@ public class XlsxExporter {
     public static final String FLAG_HEADER = "UI_FLAG";
     public static final String FLAG_VALUE = "UI 깨짐 주의";
     public static final String HISTORY_SHEET = "수정 이력";
-    public static final String GLOSSARY_SHEET = "용어집";
+    public static final String GLOSSARY_SHEET = "단어장";
     public static final String NOTE_HEADER = "비고";
     /** 기존 한국어와 달라진 칸의 채우기 색(연노랑). */
     public static final String CHANGED_FILL_RGB = "FFF2CC";
+    /** 최종 리뷰 시트에서 "최종 수정" 표시를 켠 칸의 채우기 색(연두, 설계 2026-10-17). */
+    public static final String FINAL_MARK_FILL_RGB = "E2F0D9";
 
     /**
      * pairIndex는 그 시트 설정의 pairs 안 번호다. 행 번호는 시트마다 겹치므로 시트 이름과 함께 봐야 한다.
      * changed: 기존 한국어와 다른 칸 — 내보낼 때 연노랑으로 채운다.
+     * marked: 최종 리뷰 시트에서 최종 수정 표시를 켠 칸 — 연두로 채운다(changed보다 앞선다).
      */
-    public record ExportRow(String sheetName, int rowNo, int pairIndex, String ko, boolean flagged, boolean changed) {}
+    public record ExportRow(String sheetName, int rowNo, int pairIndex, String ko, boolean flagged, boolean changed, boolean marked) {
+        public ExportRow(String sheetName, int rowNo, int pairIndex, String ko, boolean flagged, boolean changed) {
+            this(sheetName, rowNo, pairIndex, ko, flagged, changed, false);
+        }
+    }
     public record HistoryRow(String indexLabel, int version, String author, String text, String reviewerName) {}
     public record GlossaryRow(String src, String type, String ko) {}
     /** 검수 비고. 한 엑셀 행에 열 쌍이 여럿이면 pairIndex 순으로 " / "로 잇는다. */
@@ -80,7 +87,8 @@ public class XlsxExporter {
         try (Workbook wb = WorkbookInspector.open(original); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             java.util.Map<String, List<ExportRow>> bySheet = new java.util.HashMap<>();
             for (ExportRow r : rows) bySheet.computeIfAbsent(r.sheetName(), k -> new java.util.ArrayList<>()).add(r);
-            Highlighter highlight = new Highlighter(wb);
+            Highlighter highlight = new Highlighter(wb, CHANGED_FILL_RGB);
+            Highlighter markFill = new Highlighter(wb, FINAL_MARK_FILL_RGB);
             for (NormalizeConfig cfg : cfgs) {
                 Sheet sheet = WorkbookInspector.requireSheet(wb, cfg.getSheetName());
                 Columns cols = resolve(sheet, cfg);
@@ -97,7 +105,8 @@ public class XlsxExporter {
                     Row row = rowAt(sheet, r.rowNo() - 1);
                     Cell ko = cellAt(row, cols.koIdxs.get(r.pairIndex()));
                     ko.setCellValue(r.ko());
-                    if (r.changed()) highlight.apply(ko);
+                    if (r.marked()) markFill.apply(ko);
+                    else if (r.changed()) highlight.apply(ko);
                     if (flagIdx >= 0 && r.flagged()) cellAt(row, flagIdx).setCellValue(FLAG_VALUE);
                 }
 
@@ -126,6 +135,112 @@ public class XlsxExporter {
         } catch (IOException e) { throw new UncheckedIOException(e); }
     }
 
+    /**
+     * 시트 하나만 남긴다(설계 2026-10-12 §4). keep과 우리가 붙이는 수정 이력·단어장 시트만 두고 나머지 원본 시트는 지운다.
+     * 지울 시트를 가리키는 keep의 수식은 지우기 전에 계산해 값으로 바꾸고(안 그러면 #REF!), 지울 시트를 가리키는 이름 정의도 지운다.
+     * 서식·열 너비·고정 틀은 시트에 딸려 있어 그대로 남는다.
+     */
+    public static byte[] keepOnly(byte[] book, String keep) {
+        try (Workbook wb = WorkbookInspector.open(book); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            WorkbookInspector.requireSheet(wb, keep);
+            if (!keepSheets(wb, java.util.Set.of(keep, HISTORY_SHEET, GLOSSARY_SHEET))) return book;
+            wb.write(out);
+            return out.toByteArray();
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
+    /**
+     * 최종 수정분만(2026-10-19). headerRows의 시트만 남기고, 시트마다 머리글 줄까지와 keep 행(1부터 센 행 번호)만 두어
+     * 순서대로 위로 붙인다 — 빈 줄을 남기지 않으므로 엑셀 행 번호는 원본과 달라지고 ID 열로 맞춘다.
+     * 이어진 행 묶음마다 한 번씩만 옮긴다. 행 하나씩 shiftRows하면 큰 시트에서 행 수의 제곱만큼 든다.
+     */
+    public static byte[] keepRows(byte[] book, java.util.Map<String, Integer> headerRows, java.util.Map<String, java.util.Set<Integer>> keep) {
+        try (Workbook wb = WorkbookInspector.open(book); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            keepSheets(wb, headerRows.keySet());
+            for (java.util.Map.Entry<String, Integer> e : headerRows.entrySet()) {
+                Sheet sheet = WorkbookInspector.requireSheet(wb, e.getKey());
+                int first = e.getValue();   // 0부터 센 첫 데이터 행 = 1부터 센 머리글 줄
+                java.util.TreeSet<Integer> kept = new java.util.TreeSet<>();
+                for (int rowNo : keep.getOrDefault(e.getKey(), java.util.Set.of())) if (rowNo - 1 >= first) kept.add(rowNo - 1);
+                for (int i = sheet.getLastRowNum(); i >= first; i--) {
+                    Row row = sheet.getRow(i);
+                    if (row != null && !kept.contains(i)) sheet.removeRow(row);
+                }
+                int target = first;
+                Integer[] idx = kept.toArray(new Integer[0]);
+                for (int i = 0; i < idx.length; ) {
+                    int start = idx[i], end = start;
+                    while (i + 1 < idx.length && idx[i + 1] == end + 1) { end++; i++; }
+                    i++;
+                    if (start != target) sheet.shiftRows(start, end, target - start, true, false);
+                    target += end - start + 1;
+                }
+            }
+            wb.setActiveSheet(0);
+            wb.setSelectedTab(0);
+            wb.write(out);
+            return out.toByteArray();
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
+    /**
+     * kept에 없는 시트를 지운다. 남는 시트의 수식 가운데 지울 시트를 가리키는 것은 지우기 전에 값으로 바꾸고(안 그러면 #REF!),
+     * 지울 시트를 가리키는 이름 정의도 지운다. 지울 시트가 없으면 아무것도 하지 않고 false.
+     */
+    private static boolean keepSheets(Workbook wb, java.util.Set<String> kept) {
+        java.util.Set<String> gone = new java.util.HashSet<>();
+        for (int i = 0; i < wb.getNumberOfSheets(); i++) if (!kept.contains(wb.getSheetName(i))) gone.add(wb.getSheetName(i));
+        if (gone.isEmpty()) return false;
+        org.apache.poi.ss.usermodel.FormulaEvaluator eval = wb.getCreationHelper().createFormulaEvaluator();
+        for (int i = 0; i < wb.getNumberOfSheets(); i++) {
+            if (gone.contains(wb.getSheetName(i))) continue;
+            for (Row row : wb.getSheetAt(i)) for (Cell cell : row) {
+                if (cell.getCellType() != org.apache.poi.ss.usermodel.CellType.FORMULA || !refersTo(cell.getCellFormula(), gone)) continue;
+                freeze(cell, eval);
+            }
+        }
+        for (int i = wb.getNumberOfNames() - 1; i >= 0; i--) {
+            org.apache.poi.ss.usermodel.Name n = wb.getAllNames().get(i);
+            if (n.getSheetIndex() >= 0 && gone.contains(wb.getSheetName(n.getSheetIndex()))) continue;   // 시트 범위 이름은 시트와 같이 지워진다
+            String f = n.getRefersToFormula();
+            if (f != null && refersTo(f, gone)) wb.removeName(n);
+        }
+        for (int i = wb.getNumberOfSheets() - 1; i >= 0; i--) if (gone.contains(wb.getSheetName(i))) wb.removeSheetAt(i);
+        wb.setActiveSheet(0);
+        wb.setSelectedTab(0);
+        return true;
+    }
+
+    /** 수식이 지울 시트 가운데 하나를 가리키는지. 시트 이름은 그대로(Item!A1) 또는 따옴표로('기타 시트'!A1) 나온다. */
+    private static boolean refersTo(String formula, java.util.Set<String> sheets) {
+        for (String s : sheets)
+            if (formula.contains(s + "!") || formula.contains("'" + s.replace("'", "''") + "'!")) return true;
+        return false;
+    }
+
+    /** 수식을 지금 값으로 바꾼다. 계산이 안 되면(외부 참조 등) 파일에 저장된 마지막 결과를 쓴다. */
+    private static void freeze(Cell cell, org.apache.poi.ss.usermodel.FormulaEvaluator eval) {
+        org.apache.poi.ss.usermodel.CellValue v;
+        try { v = eval.evaluate(cell); } catch (RuntimeException e) { v = null; }
+        org.apache.poi.ss.usermodel.CellType cached = cell.getCachedFormulaResultType();
+        if (v == null) {
+            switch (cached) {
+                case NUMERIC -> { double d = cell.getNumericCellValue(); cell.removeFormula(); cell.setCellValue(d); }
+                case BOOLEAN -> { boolean b = cell.getBooleanCellValue(); cell.removeFormula(); cell.setCellValue(b); }
+                case STRING -> { String t = cell.getStringCellValue(); cell.removeFormula(); cell.setCellValue(t); }
+                default -> { cell.removeFormula(); cell.setBlank(); }
+            }
+            return;
+        }
+        cell.removeFormula();
+        switch (v.getCellType()) {
+            case NUMERIC -> cell.setCellValue(v.getNumberValue());
+            case BOOLEAN -> cell.setCellValue(v.getBooleanValue());
+            case STRING -> cell.setCellValue(v.getStringValue());
+            default -> cell.setBlank();
+        }
+    }
+
     private record Columns(List<Integer> koIdxs, int flagIdx) {}
 
     /**
@@ -134,9 +249,10 @@ public class XlsxExporter {
      */
     private static final class Highlighter {
         private final Workbook wb;
+        private final String rgb;
         private final java.util.Map<Short, CellStyle> byOriginal = new java.util.HashMap<>();
 
-        Highlighter(Workbook wb) { this.wb = wb; }
+        Highlighter(Workbook wb, String rgb) { this.wb = wb; this.rgb = rgb; }
 
         void apply(Cell cell) {
             CellStyle original = cell.getCellStyle();
@@ -145,7 +261,7 @@ public class XlsxExporter {
                 copy.cloneStyleFrom(original);
                 copy.setFillPattern(FillPatternType.SOLID_FOREGROUND);
                 if (copy instanceof org.apache.poi.xssf.usermodel.XSSFCellStyle x)
-                    x.setFillForegroundColor(new org.apache.poi.xssf.usermodel.XSSFColor(hex(CHANGED_FILL_RGB), null));
+                    x.setFillForegroundColor(new org.apache.poi.xssf.usermodel.XSSFColor(hex(rgb), null));
                 else copy.setFillForegroundColor(org.apache.poi.ss.usermodel.IndexedColors.LIGHT_YELLOW.getIndex());
                 return copy;
             }));
@@ -164,7 +280,7 @@ public class XlsxExporter {
         List<Integer> ko = new java.util.ArrayList<>();
         for (NormalizeConfig.ColumnPair pair : cfg.getPairs()) {
             if (pair.isNew()) ko.add(next++);
-            else ko.add(CellReference.convertColStringToIndex(pair.koCol()));
+            else ko.add(CellReference.convertColStringToIndex(pair.fixCol() != null ? pair.fixCol() : pair.koCol()));
         }
         int flag = next;
         for (int idx : ko) flag = Math.max(flag, idx + 1);

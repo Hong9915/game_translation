@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ColumnPair } from '../api/types'
-import { applyFixMode, applyRole, canOverwrite, defaultFixHeader, roleOptions, roleValue } from './columnRoles'
+import { applyFinal, applyFixMode, applyRole, canOverwrite, defaultFixHeader, roleOptions, roleValue } from './columnRoles'
 
 const pair = (over: Partial<ColumnPair> = {}): ColumnPair =>
   ({ srcCol: 'C', enCol: 'D', koColMode: 'EXISTING_TO_NEW', koCol: 'E', koHeader: 'KR_Fix', ...over })
@@ -83,5 +83,30 @@ describe('canOverwrite / defaultFixHeader', () => {
   it('numbers extra fix headers', () => {
     expect(defaultFixHeader(0)).toBe('KR_Fix')
     expect(defaultFixHeader(1)).toBe('KR_Fix2')
+  })
+})
+
+describe('최종 리뷰 버전 (수정 한국어 열)', () => {
+  it('offers the fixed-korean role only in final review mode', () => {
+    expect(roleOptions(1, true).map((o) => o.label)).toEqual(['— 없음 —', 'ID', '간체 원문', '영어', '기존 한국어', '수정 한국어'])
+    expect(roleOptions(1).map((o) => o.label)).not.toContain('수정 한국어')
+  })
+
+  it('setting the fix column writes there instead of a new column', () => {
+    const next = applyRole(cfg(), 'F', 'FIX:0', 'NEW')
+    expect(next.pairs[0]).toMatchObject({ koCol: 'E', fixCol: 'F', koColMode: 'EXISTING_TO_NEW', koHeader: null })
+    expect(roleValue(next, 'F')).toBe('FIX:0')
+  })
+
+  it('dropping the existing column drops the fix column too', () => {
+    const withFix = applyRole(cfg(), 'F', 'FIX:0', 'NEW')
+    const next = applyRole(withFix, 'E', 'NONE', 'NEW')
+    expect(next.pairs[0]).toMatchObject({ koCol: null, fixCol: null, koColMode: 'NEW' })
+  })
+
+  it('leaving final review mode clears fix columns and restores the new column header', () => {
+    const withFix = applyRole(cfg(), 'F', 'FIX:0', 'NEW')
+    const off = applyFinal(withFix, false, 'NEW')
+    expect(off.pairs[0]).toMatchObject({ koCol: 'E', fixCol: null, koColMode: 'EXISTING_TO_NEW', koHeader: 'KR_Fix' })
   })
 })

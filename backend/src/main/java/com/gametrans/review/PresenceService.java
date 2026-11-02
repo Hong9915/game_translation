@@ -24,6 +24,12 @@ import org.springframework.stereotype.Service;
 public class PresenceService {
     static final Duration TTL = Duration.ofSeconds(60);
 
+    /**
+     * 게임 전체 리뷰 화면의 방 번호. 방 map을 프로젝트와 같이 쓰려고 게임 id를 음수로 둔다 — 프로젝트 id는 늘 양수라 겹치지 않고,
+     * ReviewEvents.presence가 음수를 보고 게임 스트림으로 보낸다. 파일 화면과 게임 화면 접속자는 섞이지 않는다.
+     */
+    public static Long gameRoom(Long gameId) { return -gameId; }
+
     private record Seen(PresenceEntry entry, Instant lastSeen) {}
 
     private final Map<Long, Map<Long, Seen>> byProject = new ConcurrentHashMap<>();

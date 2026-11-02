@@ -37,7 +37,6 @@ class TranslationControllerTest extends IntegrationTest {
         fake.breakPlaceholdersOnce = new java.util.HashSet<>(Set.of("ItemText!6"));
     }
 
-    @Autowired com.gametrans.term.TermRepository termRepo;
     @Autowired com.gametrans.memory.MemoryEntryRepository memoryRepo;
     @Autowired com.gametrans.glossary.GlossaryEntryRepository glossaryRepo;
     @Autowired com.gametrans.project.ProjectRepository projects;
@@ -51,20 +50,11 @@ class TranslationControllerTest extends IntegrationTest {
         glossaryRepo.save(g);
     }
 
-    /**
-     * 번역 프롬프트에는 구 용어와 단어장이 함께 들어가고(같은 원문이면 단어장), 용어 누락 표시·재시도는 단어장만 본다.
-     * 구 용어(长剑)가 빠진 번역은 다시 묻지도, 표시하지도 않는다.
-     */
+    /** 번역 프롬프트와 용어 누락 표시·재시도는 모두 게임 단어장만 본다. 단어장에 없는 말(长剑)은 프롬프트에도 없다. */
     @Test
-    void thePromptKeepsOldTermsButTermMissFollowsTheGlossary() throws Exception {
+    void thePromptAndTermMissFollowTheGlossary() throws Exception {
         long pid = TestProjects.upload(mvc);
         TestProjects.normalize(mvc, pid);
-        for (String[] kv : new String[][] {{"长剑", "장검"}, {"火焰", "불"}}) {
-            com.gametrans.term.Term t = new com.gametrans.term.Term();
-            t.setProjectId(pid); t.setSrcText(kv[0]); t.setType(com.gametrans.term.Term.Type.OTHER);
-            t.setConfirmedKo(kv[1]); t.setConfirmed(true);
-            termRepo.save(t);
-        }
         glossaryEntry(pid, "火焰", "화염");
         fake.dropOnce.clear(); fake.breakPlaceholdersOnce.clear();
         fake.translations.put("一把附有火焰之力的长剑，攻击时有概率造成灼烧。", "화염의 힘이 깃든 롱소드.");   // 장검 없음, 화염 있음
@@ -76,21 +66,18 @@ class TranslationControllerTest extends IntegrationTest {
         List<LlmClient.TranslateBatchRequest> calls = fake.translateCalls.stream()
                 .filter(c -> c.rows().stream().anyMatch(r -> r.index().equals("ItemText!3"))).toList();
         assertThat(calls).hasSize(1);   // 단어장 용어가 들어 있으니 다시 묻지 않는다
-        assertThat(calls.get(0).glossary()).containsEntry("长剑", "장검").containsEntry("火焰", "화염");
+        assertThat(calls.get(0).glossary()).containsExactly(java.util.Map.entry("火焰", "화염"));
         mvc.perform(get("/api/projects/{id}/segments", pid))
                 .andExpect(jsonPath("$.rows[?(@.indexLabel=='ItemText!3')].termMiss[*]").isEmpty())
                 .andExpect(jsonPath("$.stats.termMiss").value(0));
     }
 
-    /** 확정 용어는 그 용어가 들어 있는 묶음의 프롬프트에만 들어간다. */
+    /** 단어장 용어는 그 용어가 들어 있는 묶음의 프롬프트에만 들어간다. */
     @Test
     void glossaryIsFilteredToTermsPresentInEachBatch() throws Exception {
         long pid = TestProjects.upload(mvc);
         TestProjects.normalize(mvc, pid);
-        com.gametrans.term.Term t = new com.gametrans.term.Term();
-        t.setProjectId(pid); t.setSrcText("火焰"); t.setType(com.gametrans.term.Term.Type.OTHER);
-        t.setConfirmedKo("화염"); t.setConfirmed(true);
-        termRepo.save(t);
+        glossaryEntry(pid, "火焰", "화염");
         fake.dropOnce.clear(); fake.breakPlaceholdersOnce.clear();
         fake.translations.put("一把附有火焰之力的长剑，攻击时有概率造成灼烧。", "화염의 힘이 깃든 장검.");  // 용어 지킴 → 재시도 없음
 

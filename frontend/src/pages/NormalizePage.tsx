@@ -3,13 +3,15 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useProject, useProjectId } from '../api/hooks'
-import type { ColumnPair, NormalizeRequest, SheetOption } from '../api/types'
+import type { ColumnPair, NormalizeRequest, SheetOption, SourceLang } from '../api/types'
+import { DeepLInstructionsField } from '../components/DeepLInstructionsField'
+import { useDeepLInstructions } from '../lib/deeplInstructions'
 import { ColumnRoleTable } from '../components/normalize/ColumnRoleTable'
 import { SheetChips } from '../components/normalize/SheetChips'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { inputClass } from '../components/ui/Field'
-import { applyFixMode, applyRole, canOverwrite, defaultFixHeader, type FixMode, type RoleConfig } from '../lib/columnRoles'
+import { applyFinal, applyFixMode, applyRole, canOverwrite, defaultFixHeader, type FixMode, type RoleConfig } from '../lib/columnRoles'
 
 /** 시트 추측값으로 첫 설정을 만든다. 한국어 열을 찾았으면 기존 열을 읽고 Fix는 새 열에 쓴다. */
 function configFromGuess(s: SheetOption): RoleConfig {
@@ -25,17 +27,26 @@ function configFromGuess(s: SheetOption): RoleConfig {
 export function NormalizePage() {
   const id = useProjectId() as number
   const project = useProject(id).data
+  const instructions = useDeepLInstructions(project?.gameId)
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [headerRow, setHeaderRow] = useState(1)
   const [sheet, setSheet] = useState<string | null>(null)
   const [config, setConfig] = useState<RoleConfig | null>(null)
   const [fix, setFix] = useState<FixMode>('NEW')
+  // 최종 리뷰 버전: 이미 고친 한국어 열(수정 한국어)도 읽는다. 켜야만 그 역할을 고를 수 있다.
+  const [finalReview, setFinalReview] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
   // 이미 행이 있는 시트를 다시 정규화하려는 걸 확인한다 — 확인 전엔 PUT을 보내지 않는다.
   const [confirmRerun, setConfirmRerun] = useState(false)
+  // 정규화 뒤 한국어가 빈 행을 DeepL로 번역할지와 원문 언어(영어 열을 고른 쌍이 있을 때만 영어)
+  const [translate, setTranslate] = useState(false)
+  const [pickedLang, setSourceLang] = useState<SourceLang>('ZH')
+  const hasEnglish = !!config?.pairs.some((p) => p.enCol)
+  // 영어 열을 빼면 고른 값과 상관없이 중국어로 보낸다
+  const sourceLang: SourceLang = hasEnglish ? pickedLang : 'ZH'
 
   const sheets = useQuery({ queryKey: ['sheets', id, headerRow], queryFn: () => api.sheets(id, headerRow) })
   const current = useQuery({ queryKey: ['normalize-current', id], queryFn: () => api.normalizeCurrent(id) })
@@ -51,6 +62,7 @@ export function NormalizePage() {
     const saved = current.data?.configs.find((c) => c.config.sheetName === active.name)?.config
     setConfig(saved ? { keyCol: saved.keyCol, pairs: saved.pairs } : configFromGuess(active))
     setFix(saved?.pairs.some((p) => p.koColMode === 'EXISTING') ? 'OVERWRITE' : 'NEW')
+    setFinalReview(!!saved?.pairs.some((p) => p.fixCol))
   }
   // 덮어쓸 기존 한국어 열이 사라지면 모드를 되돌린다 — 렌더 단계에서 한 번만 참인 보정
   if (config && fix === 'OVERWRITE' && !canOverwrite(config)) {
@@ -59,6 +71,12 @@ export function NormalizePage() {
   }
 
   const pickFix = (m: FixMode) => { setFix(m); setConfig((c) => applyFixMode(c!, m)) }
+  // 켜면 Fix는 수정 한국어 열에 쓰므로 덮어쓰기 모드를 새 열로 되돌려 둔다(끌 때 그 모드로 돌아간다).
+  const pickFinal = (on: boolean) => {
+    setFinalReview(on)
+    if (on) setFix('NEW')
+    setConfig((c) => applyFinal(on ? applyFixMode(c!, 'NEW') : c!, on, 'NEW'))
+  }
 
   const configuredNames = new Set((current.data?.configs ?? []).map((c) => c.config.sheetName))
   const chips = (current.data?.configs ?? []).map((c) => ({ name: c.config.sheetName, rows: c.stats.normalized }))
@@ -78,9 +96,17 @@ export function NormalizePage() {
   })
 
   const run = useMutation({
-    mutationFn: () => api.normalize(id, {
-      sheetName: sheet!, headerRow, keyCol: config!.keyCol, pairs: config!.pairs, retranslateExisting: false,
-    } satisfies NormalizeRequest),
+    mutationFn: async () => {
+      const res = await api.normalize(id, {
+        sheetName: sheet!, headerRow, keyCol: config!.keyCol, pairs: config!.pairs, retranslateExisting: false,
+      } satisfies NormalizeRequest)
+      // 정규화가 끝난 뒤에 번역을 건다 — 번역 작업은 백그라운드로 돌고 진행은 리뷰 화면 위 막대가 보여 준다
+      if (translate) {
+        await instructions.save()   // 고친 지시문을 게임에 저장한 뒤 번역을 건다
+        await api.startTranslate(id, { sheet: sheet!, sourceLang })
+      }
+      return res
+    },
     onSuccess: () => {
       setConfirmRerun(false)
       qc.invalidateQueries({ queryKey: ['normalize-current', id] })
@@ -90,7 +116,12 @@ export function NormalizePage() {
     onError: (e: Error) => setError(e.message),
   })
 
-  const disabled = !config || config.pairs.some((p) => !p.srcCol)
+  // 최종 리뷰 버전은 수정 한국어 열이 하나는 있어야 하고, 그 쌍엔 기존 한국어 열도 있어야 한다.
+  const finalProblem = !finalReview || !config ? null
+    : !config.pairs.some((p) => p.fixCol) ? '수정 한국어 열을 골라 주세요.'
+    : config.pairs.some((p) => p.fixCol && !p.koCol) ? '수정 한국어 열과 함께 기존 한국어 열도 골라 주세요.'
+    : null
+  const disabled = !config || config.pairs.some((p) => !p.srcCol) || finalProblem !== null
 
   return (
     <div className="flex min-h-screen flex-col gap-4 px-10 pt-9">
@@ -130,6 +161,13 @@ export function NormalizePage() {
               {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
           </label>
+          {config && (
+            <label className="ml-4 flex items-center gap-1.5 whitespace-nowrap text-[13px] text-ink">
+              <input type="checkbox" checked={finalReview} onChange={(e) => pickFinal(e.target.checked)} />
+              최종 리뷰 버전
+              <span className="text-xs text-muted">— 이미 고친 한국어 열(수정 한국어)도 읽는다</span>
+            </label>
+          )}
         </div>
 
         {error && (
@@ -144,7 +182,8 @@ export function NormalizePage() {
             headers={active.headers}
             rows={active.preview}
             config={config}
-            fixHeader={fix === 'NEW' ? (config.pairs[0]?.koHeader ?? 'KR_Fix') : null}
+            finalReview={finalReview}
+            fixHeader={!finalReview && fix === 'NEW' ? (config.pairs[0]?.koHeader ?? 'KR_Fix') : null}
             onRole={(letter, value) => setConfig((c) => applyRole(c!, letter, value, fix))}
           />
         )}
@@ -161,7 +200,17 @@ export function NormalizePage() {
           </div>
         )}
 
-        {config && (
+        {config && finalReview && (
+          <div className="border-t border-line px-4 py-3 text-[13px]">
+            <span className="font-semibold">수정 한국어(Fix)</span>
+            <span className="ml-3 text-xs text-muted">
+              기존 한국어는 원래 값으로, 수정 한국어는 지금 Fix로 들어갑니다. 내보낼 때 Fix는 수정 한국어 열에 씁니다.
+            </span>
+            {finalProblem && <p className="mt-1 text-xs text-orange">{finalProblem}</p>}
+          </div>
+        )}
+
+        {config && !finalReview && (
           <fieldset className="flex flex-wrap items-center gap-4 border-t border-line px-4 py-3 text-[13px]">
             <legend className="sr-only">수정 한국어(Fix) 쓸 곳</legend>
             <span className="font-semibold">수정 한국어(Fix) 쓸 곳</span>
@@ -184,6 +233,27 @@ export function NormalizePage() {
         {activeStats && (
           <div className="text-xs text-muted">
             {activeStats.normalized}행 검수 대상 · 건너뜀 {activeStats.skipped} · 기존 한국어 {activeStats.kept}행
+          </div>
+        )}
+
+        {config && (
+          <div className="flex flex-wrap items-center gap-3 border-t border-line px-4 py-3 text-[13px]">
+            <label className="flex items-center gap-1.5">
+              <input type="checkbox" checked={translate} onChange={(e) => setTranslate(e.target.checked)} />
+              정규화한 뒤 한국어가 빈 행을 DeepL로 번역
+            </label>
+            {translate && (
+              <>
+                <select aria-label="번역 원문" className={`${inputClass} w-36`} value={sourceLang} onChange={(e) => setSourceLang(e.target.value as SourceLang)}>
+                  <option value="ZH">중국어 원문</option>
+                  <option value="EN" disabled={!hasEnglish}>영어 원문</option>
+                </select>
+                <span className="text-xs text-muted">
+                  {sourceLang === 'EN' ? '영어로 번역하면 단어장(중국어 기준)이 적용되지 않습니다.' : '게임 단어장을 DeepL에 같이 보냅니다. 같은 원문은 한 번만 번역합니다.'}
+                </span>
+                <DeepLInstructionsField text={instructions.text} onChange={instructions.setText} />
+              </>
+            )}
           </div>
         )}
 

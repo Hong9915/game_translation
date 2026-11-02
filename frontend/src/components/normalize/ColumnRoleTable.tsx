@@ -6,6 +6,8 @@ export interface ColumnRoleTableProps {
   rows: string[][]
   config: RoleConfig
   fixHeader: string | null
+  /** 최종 리뷰 버전이면 "수정 한국어" 역할도 고를 수 있다. */
+  finalReview?: boolean
   onRole: (letter: string, value: string) => void
 }
 
@@ -15,12 +17,13 @@ function roleClass(value: string): string {
   if (value.startsWith('SRC')) return 'border-ink bg-ink text-white'
   if (value.startsWith('EN')) return 'border-line bg-white text-ink'
   if (value.startsWith('KO')) return 'border-green bg-greenSoft text-green'
+  if (value.startsWith('FIX')) return 'border-orange bg-orangeSoft text-ink'
   return 'border-line bg-white text-muted'
 }
 
 /** 엑셀 미리보기 위에 열마다 역할 드롭다운을 붙인 표. 상태는 부모(NormalizePage)가 들고 있다. */
-export function ColumnRoleTable({ headers, rows, config, fixHeader, onRole }: ColumnRoleTableProps) {
-  const options = roleOptions(config.pairs.length)
+export function ColumnRoleTable({ headers, rows, config, fixHeader, finalReview = false, onRole }: ColumnRoleTableProps) {
+  const options = roleOptions(config.pairs.length, finalReview)
   const cell = 'max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap border border-line px-1.5 py-1'
   return (
     <div className="overflow-auto">

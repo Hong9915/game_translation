@@ -28,6 +28,10 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
     @Query("select a from Activity a where (a.projectId = :pid or (a.projectId is null and a.gameId = :gid)) and a.id < :before order by a.id desc")
     List<Activity> feed(@Param("pid") Long projectId, @Param("gid") Long gameId, @Param("before") long before, Pageable page);
 
+    /** 게임 전체 리뷰 화면의 피드: 범위에 든 파일들의 항목 + 게임 단위 항목. */
+    @Query("select a from Activity a where (a.projectId in :pids or (a.projectId is null and a.gameId = :gid)) and a.id < :before order by a.id desc")
+    List<Activity> feedOfProjects(@Param("pids") List<Long> projectIds, @Param("gid") Long gameId, @Param("before") long before, Pageable page);
+
     @Query("select r.activityId, count(r) from TranslationRevision r where r.activityId in :ids group by r.activityId")
     List<Object[]> rowCounts(@Param("ids") List<Long> ids);
 

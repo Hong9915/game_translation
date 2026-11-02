@@ -29,7 +29,7 @@ class OpenAiLlmClientTest {
     AppProperties props = new AppProperties(
             new AppProperties.OpenAi("sk-test", "gpt-5", "https://api.openai.com/v1", "low", "gpt-5-mini", "minimal", "gpt-5=1.25/10"),
             new AppProperties.Storage("local", "build/x", "", "", ""),
-            new AppProperties.Translate(30, 1.0), 50, "*");
+            new AppProperties.Translate(30, 1.0, "gpt"), 50, "*");
 
     private static String completion(String jsonContent) {
         return "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":" + com.fasterxml.jackson.databind.json.JsonMapper.builder().build().valueToTree(jsonContent).toString() + "}}]}";
@@ -71,51 +71,21 @@ class OpenAiLlmClientTest {
         server.expect(requestTo("https://api.openai.com/v1/chat/completions")).andRespond(withSuccess(withUsage, MediaType.APPLICATION_JSON));
         server.expect(requestTo("https://api.openai.com/v1/chat/completions")).andRespond(withSuccess(completion("{\"items\":[]}"), MediaType.APPLICATION_JSON));
         client.translateBatch(new LlmClient.TranslateBatchRequest("CN_ONLY", null, Map.of(), List.of(new LlmClient.TranslateRow("a", "你好", null)), List.of()));
-        client.extractTerms(List.of("你好"), java.util.Map.of());
+        client.fixTermsBatch(List.of(new LlmClient.FixTermsRow("a", "烈焰之剑", null, "불꽃 검", Map.of("烈焰", "화염"))));
         assertThat(seen).containsExactly(new UsageSink.Usage("TRANSLATE", "gpt-5-2026-01-01", 1200, 300, 120));
     }
 
-    /** 후보는 직역·의역·혼합이고 음역은 금지한다. */
+    /** 구절 분류는 가벼운 모델과 그 모델용 추론 강도로 보낸다. */
     @Test
-    void suggestPromptAsksForLiteralNotTransliteration() {
-        assertThat(Prompts.SUGGEST_SYSTEM).contains("LITERAL", "MEANING", "MIXED")
-                .contains("never on the sound")
-                .doesNotContain("\"style\":\"TRANSLITERATION\"");
-    }
-
-    /** 후보 뒤에 붙은 괄호 설명은 떼어내고, 원문에 괄호가 있을 때만 그대로 둔다. */
-    @Test
-    void suggestCandidatesDropParentheticalGloss() {
-        assertThat(Prompts.SUGGEST_SYSTEM).contains("in parentheses");
-        RestClient.Builder builder = RestClient.builder();
-        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        OpenAiLlmClient client = new OpenAiLlmClient(builder, props, new ObjectMapper(), 0);
-        server.expect(requestTo("https://api.openai.com/v1/chat/completions"))
-                .andRespond(withSuccess(completion("{\"items\":[{\"src\":\"已满\",\"candidates\":["
-                        + "{\"text\":\"가득 참\",\"style\":\"LITERAL\"},{\"text\":\"만족(가득 찬 상태)\",\"style\":\"MEANING\"},{\"text\":\"풀 （가득）\",\"style\":\"MIXED\"}]},"
-                        + "{\"src\":\"礼包(大)\",\"candidates\":[{\"text\":\"패키지(대)\",\"style\":\"MEANING\"}]}]}"), MediaType.APPLICATION_JSON));
-
-        List<LlmClient.CandidateSuggestion> out = client.suggestCandidates(List.of(new LlmClient.TermInput("已满", "COMMON"), new LlmClient.TermInput("礼包(大)", "ITEM")));
-
-        assertThat(out.get(0).candidates()).extracting(LlmClient.Candidate::text).containsExactly("가득 참", "만족", "풀");
-        assertThat(out.get(1).candidates()).extracting(LlmClient.Candidate::text).containsExactly("패키지(대)");
-    }
-
-    /** 추출·후보 추천은 가벼운 모델과 그 모델용 추론 강도로 보낸다. */
-    @Test
-    void extractAndSuggestUseTheLightModel() {
+    void classifyUsesTheLightModel() {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         OpenAiLlmClient client = new OpenAiLlmClient(builder, props, new ObjectMapper(), 0);
         server.expect(requestTo("https://api.openai.com/v1/chat/completions"))
                 .andExpect(jsonPath("$.model").value("gpt-5-mini"))
                 .andExpect(jsonPath("$.reasoning_effort").value("minimal"))
-                .andRespond(withSuccess(completion("{\"items\":[{\"src\":\"烈焰之剑\",\"type\":\"ITEM\"}]}"), MediaType.APPLICATION_JSON));
-        server.expect(requestTo("https://api.openai.com/v1/chat/completions"))
-                .andExpect(jsonPath("$.model").value("gpt-5-mini"))
-                .andRespond(withSuccess(completion("{\"items\":[]}"), MediaType.APPLICATION_JSON));
-        assertThat(client.extractTerms(List.of("烈焰之剑"), java.util.Map.of())).hasSize(1);
-        assertThat(client.suggestCandidates(List.of(new LlmClient.TermInput("烈焰之剑", "ITEM")))).isEmpty();
+                .andRespond(withSuccess(completion("{\"items\":[{\"src\":\"烈焰之剑\",\"category\":\"ITEM\"}]}"), MediaType.APPLICATION_JSON));
+        assertThat(client.classifyPhrases(List.of(new LlmClient.PhraseInput("烈焰之剑", "화염의 검", null, null)))).hasSize(1);
         server.verify();
     }
 
@@ -132,7 +102,7 @@ class OpenAiLlmClientTest {
                 .andExpect(jsonPath("$.model").value("gpt-4.1"))
                 .andExpect(jsonPath("$.reasoning_effort").doesNotExist())
                 .andRespond(withSuccess(completion("{\"items\":[]}"), MediaType.APPLICATION_JSON));
-        assertThat(client.extractTerms(List.of("x"), java.util.Map.of())).isEmpty();
+        assertThat(client.shortenBatch(List.of())).isEmpty();
         server.verify();
     }
 
@@ -143,25 +113,20 @@ class OpenAiLlmClientTest {
         OpenAiLlmClient client = new OpenAiLlmClient(builder, props, new ObjectMapper(), 0);
         server.expect(requestTo("https://api.openai.com/v1/chat/completions")).andRespond(withServerError());
         server.expect(requestTo("https://api.openai.com/v1/chat/completions"))
-                .andRespond(withSuccess(completion("{\"items\":[{\"src\":\"烈焰之剑\",\"type\":\"ITEM\"}]}"), MediaType.APPLICATION_JSON));
+                .andRespond(withSuccess(completion("{\"items\":[{\"index\":\"a\",\"ko\":\"화염 검\"}]}"), MediaType.APPLICATION_JSON));
 
-        List<LlmClient.TermExtraction> out = client.extractTerms(List.of("烈焰之剑"), java.util.Map.of());
-        assertThat(out).containsExactly(new LlmClient.TermExtraction("烈焰之剑", "ITEM"));
+        assertThat(client.fixTermsBatch(List.of(new LlmClient.FixTermsRow("a", "烈焰之剑", null, "불꽃 검", Map.of("烈焰", "화염"))))).containsExactly(new LlmClient.TranslationResult("a", "화염 검"));
         server.verify();
     }
 
     @Test
-    void suggestAndShortenParseTheirShapes() {
+    void shortenParsesItsShape() {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         OpenAiLlmClient client = new OpenAiLlmClient(builder, props, new ObjectMapper(), 0);
         server.expect(requestTo("https://api.openai.com/v1/chat/completions"))
-                .andRespond(withSuccess(completion("{\"items\":[{\"src\":\"烈焰之剑\",\"candidates\":[{\"text\":\"열염지검\",\"style\":\"TRANSLITERATION\"},{\"text\":\"화염의 검\",\"style\":\"MEANING\"}]}]}"), MediaType.APPLICATION_JSON));
-        server.expect(requestTo("https://api.openai.com/v1/chat/completions"))
                 .andRespond(withSuccess(completion("{\"items\":[{\"index\":\"ItemText!3\",\"ko\":\"화염 장검\"}]}"), MediaType.APPLICATION_JSON));
 
-        List<LlmClient.CandidateSuggestion> s = client.suggestCandidates(List.of(new LlmClient.TermInput("烈焰之剑", "ITEM")));
-        assertThat(s.get(0).candidates()).hasSize(2);
         List<LlmClient.TranslationResult> sh = client.shortenBatch(List.of(new LlmClient.ShortenRow("ItemText!3", "烈焰之剑", "화염의 힘이 깃든 장검", 6)));
         assertThat(sh.get(0).ko()).isEqualTo("화염 장검");
         server.verify();
@@ -176,7 +141,7 @@ class OpenAiLlmClientTest {
         server.expect(requestTo("https://api.openai.com/v1/chat/completions")).andRespond(withServerError());
         server.expect(requestTo("https://api.openai.com/v1/chat/completions")).andRespond(withServerError());
 
-        assertThatThrownBy(() -> client.extractTerms(List.of("烈焰之剑"), java.util.Map.of()))
+        assertThatThrownBy(() -> client.fixTermsBatch(List.of(new LlmClient.FixTermsRow("a", "烈焰之剑", null, "불꽃 검", Map.of("烈焰", "화염")))))
                 .isInstanceOf(HttpServerErrorException.class);
         server.verify();
     }
@@ -188,7 +153,7 @@ class OpenAiLlmClientTest {
         OpenAiLlmClient client = new OpenAiLlmClient(builder, props, new ObjectMapper(), 0);
         server.expect(requestTo("https://api.openai.com/v1/chat/completions")).andRespond(withBadRequest());
 
-        assertThatThrownBy(() -> client.extractTerms(List.of("烈焰之剑"), java.util.Map.of()))
+        assertThatThrownBy(() -> client.fixTermsBatch(List.of(new LlmClient.FixTermsRow("a", "烈焰之剑", null, "불꽃 검", Map.of("烈焰", "화염")))))
                 .isInstanceOf(HttpClientErrorException.class);
         server.verify();
     }
@@ -200,10 +165,9 @@ class OpenAiLlmClientTest {
         OpenAiLlmClient client = new OpenAiLlmClient(builder, props, new ObjectMapper(), 0);
         server.expect(requestTo("https://api.openai.com/v1/chat/completions")).andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
         server.expect(requestTo("https://api.openai.com/v1/chat/completions"))
-                .andRespond(withSuccess(completion("{\"items\":[{\"src\":\"烈焰之剑\",\"type\":\"ITEM\"}]}"), MediaType.APPLICATION_JSON));
+                .andRespond(withSuccess(completion("{\"items\":[{\"index\":\"a\",\"ko\":\"화염 검\"}]}"), MediaType.APPLICATION_JSON));
 
-        List<LlmClient.TermExtraction> out = client.extractTerms(List.of("烈焰之剑"), java.util.Map.of());
-        assertThat(out).containsExactly(new LlmClient.TermExtraction("烈焰之剑", "ITEM"));
+        assertThat(client.fixTermsBatch(List.of(new LlmClient.FixTermsRow("a", "烈焰之剑", null, "불꽃 검", Map.of("烈焰", "화염"))))).containsExactly(new LlmClient.TranslationResult("a", "화염 검"));
         server.verify();
     }
 

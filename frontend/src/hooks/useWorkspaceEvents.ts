@@ -16,7 +16,9 @@ export type ConnStatus = 'connecting' | 'open' | 'lost'
  * onRowUpdated: segment-updated로 어떤 행의 fix가 바뀔 때마다 부른다(누가 바꿨든) — 저장 실패로 남겨둔 텍스트가
  * 그 사이 바뀐 서버 값을 가리게 두지 않도록 부모(WorkspacePage)가 failedText를 정리하는 데 쓴다.
  */
-export function useWorkspaceEvents(projectId: number, me: ReviewerRef | null, onRowUpdated?: (id: number, fix: string | null) => void) {
+export function useWorkspaceEvents(projectId: number, me: ReviewerRef | null, onRowUpdated?: (id: number, fix: string | null) => void,
+  /** 목록·요약·변경 내역 캐시 키. 파일 화면은 프로젝트 id, 게임 화면은 'g{게임 id}'(스트림은 -게임 id). */
+  cacheKey: number | string = projectId) {
   const qc = useQueryClient()
   const [highlighted, setHighlighted] = useState<Set<number>>(new Set())
   const [presence, setPresenceState] = useState<PresenceEntry[]>([])
@@ -34,8 +36,23 @@ export function useWorkspaceEvents(projectId: number, me: ReviewerRef | null, on
     let seenOpen = false, sawError = false
     let alreadyOpen = false
     const invalidateAll = () => {
-      qc.invalidateQueries({ queryKey: ['workspace-rows', projectId] })
-      qc.invalidateQueries({ queryKey: ['workspace-summary', projectId] })
+      qc.invalidateQueries({ queryKey: ['workspace-rows', cacheKey] })
+      qc.invalidateQueries({ queryKey: ['workspace-summary', cacheKey] })
+    }
+    // 게임 화면은 일괄 체크·용어 다시 계산 한 번에 파일마다 marks-bulk/refresh가 온다(캐슬케이퍼 41개).
+    // 받을 때마다 다시 읽으면 수십 벌의 목록·요약 요청이 서버에 쌓이므로 500ms 동안 모아 한 번만 읽는다.
+    // 첫 이벤트에서 시작한 타이머를 뒤 이벤트가 늦추지 않는다 — 계속 와도 500ms마다는 반영된다.
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null
+    let reloadReviewers = false
+    const scheduleReload = (withReviewers = false) => {
+      reloadReviewers ||= withReviewers
+      if (reloadTimer) return
+      reloadTimer = setTimeout(() => {
+        reloadTimer = null
+        invalidateAll()
+        if (reloadReviewers) qc.invalidateQueries({ queryKey: ['reviewers'] })
+        reloadReviewers = false
+      }, SUMMARY_COALESCE_MS)
     }
     const flash = (ids: number[]) => {
       setHighlighted((prev) => new Set([...prev, ...ids]))
@@ -47,14 +64,14 @@ export function useWorkspaceEvents(projectId: number, me: ReviewerRef | null, on
     }
     const scheduleSummary = () => {
       if (summaryTimer.current) clearTimeout(summaryTimer.current)
-      summaryTimer.current = setTimeout(() => { summaryTimer.current = null; qc.invalidateQueries({ queryKey: ['workspace-summary', projectId] }) }, SUMMARY_COALESCE_MS)
+      summaryTimer.current = setTimeout(() => { summaryTimer.current = null; qc.invalidateQueries({ queryKey: ['workspace-summary', cacheKey] }) }, SUMMARY_COALESCE_MS)
     }
     // 변경 내역 패널(설계 2026-09-30 §4.4): 새 이벤트 없이 기존 세 이벤트를 받으면 피드 상단을 다시 읽는다.
     // 요약과 같은 500ms 병합. 패널이 닫혀 있으면 구독자가 없어 아무 요청도 안 나간다.
     let activityTimer: ReturnType<typeof setTimeout> | null = null
     const scheduleActivity = () => {
       if (activityTimer) clearTimeout(activityTimer)
-      activityTimer = setTimeout(() => { activityTimer = null; qc.invalidateQueries({ queryKey: ['activity', projectId] }) }, SUMMARY_COALESCE_MS)
+      activityTimer = setTimeout(() => { activityTimer = null; qc.invalidateQueries({ queryKey: ['activity', cacheKey] }) }, SUMMARY_COALESCE_MS)
     }
     const off = subscribeProjectStream(projectId, {
       open: () => { setStatus('open'); if (alreadyOpen || seenOpen || sawError) invalidateAll(); seenOpen = true },
@@ -62,12 +79,12 @@ export function useWorkspaceEvents(projectId: number, me: ReviewerRef | null, on
       review: (e) => {
         const ev = JSON.parse((e as MessageEvent).data) as ReviewEvent
         if (ev.type === 'presence') { setPresence(ev.reviewers); return }
-        if (ev.type === 'refresh') { invalidateAll(); qc.invalidateQueries({ queryKey: ['reviewers'] }); scheduleActivity(); return }
+        if (ev.type === 'refresh') { scheduleReload(true); scheduleActivity(); return }
         // 누가 단어장 항목을 고쳤다: 열린 단어장 패널이 목록을 다시 읽는다(행이 안 바뀌었어도 온다).
         if (ev.type === 'glossary') { qc.invalidateQueries({ queryKey: ['glossary'] }); scheduleActivity(); return }
         // 일괄 체크가 커서 행 목록 없이 왔다: 목록·요약을 다시 읽는다
-        if (ev.type === 'marks-bulk') { invalidateAll(); return }
-        for (const [key, data] of qc.getQueriesData<WorkspaceRowsResponse>({ queryKey: ['workspace-rows', projectId] })) {
+        if (ev.type === 'marks-bulk') { scheduleReload(); return }
+        for (const [key, data] of qc.getQueriesData<WorkspaceRowsResponse>({ queryKey: ['workspace-rows', cacheKey] })) {
           if (data) qc.setQueryData(key, patchRows(data, ev))
         }
         if (ev.type === 'segment-updated') onRowUpdatedRef.current?.(ev.row.id, ev.row.currentText)
@@ -83,8 +100,9 @@ export function useWorkspaceEvents(projectId: number, me: ReviewerRef | null, on
       timers.current.forEach(clearTimeout); timers.current = []
       if (summaryTimer.current) { clearTimeout(summaryTimer.current); summaryTimer.current = null }
       if (activityTimer) { clearTimeout(activityTimer); activityTimer = null }
+      if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null }
     }
-  }, [projectId, qc])
+  }, [projectId, cacheKey, qc])
 
   return { highlighted, presence, setPresence, status }
 }

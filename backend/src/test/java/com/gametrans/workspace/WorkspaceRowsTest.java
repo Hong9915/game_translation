@@ -83,15 +83,34 @@ class WorkspaceRowsTest extends IntegrationTest {
     }
 
     @Test
-    void searchMatchesIdSourceAndFix() throws Exception {
+    void searchMatchesSourceAndFixButNotId() throws Exception {
         long pid = normalized();
+        // ID는 찾지 않는다 — "level"로 찾으면 LEVEL_… 키 행이 쏟아져 Fix의 Level을 가렸다(2026-10-26)
         mvc.perform(get("/api/review/{id}/rows", pid).param("sheet", "Skill").param("q", "211011102"))
-                .andExpect(jsonPath("$.total").value(1)).andExpect(jsonPath("$.rows[0].rowNo").value(4));
+                .andExpect(jsonPath("$.total").value(0));
         mvc.perform(get("/api/review/{id}/rows", pid).param("sheet", "Skill").param("q", "正义"))
                 .andExpect(jsonPath("$.total").value(1)).andExpect(jsonPath("$.rows[0].rowNo").value(2));
         mvc.perform(get("/api/review/{id}/rows", pid).param("sheet", "Skill").param("q", "심판"))
                 .andExpect(jsonPath("$.total").value(1)).andExpect(jsonPath("$.rows[0].rowNo").value(2));
         mvc.perform(get("/api/review/{id}/rows", pid).param("sheet", "Skill").param("q", "없는말"))
+                .andExpect(jsonPath("$.total").value(0));
+    }
+
+    @Test
+    void searchInExistingKoLooksOnlyAtExistingKo() throws Exception {
+        long pid = normalized();
+        mvc.perform(put("/api/segments/{id}/translation", rowId(pid, 0)).contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"정의의 판결\"}"))
+                .andExpect(status().isOk());
+
+        // Fix가 바뀌어 기본 검색에선 안 걸리는 옛 표기도 기존 한국어에서 찾으면 걸린다
+        mvc.perform(get("/api/review/{id}/rows", pid).param("sheet", "Skill").param("q", "심판"))
+                .andExpect(jsonPath("$.total").value(0));
+        mvc.perform(get("/api/review/{id}/rows", pid).param("sheet", "Skill").param("q", "심판").param("qIn", "EXISTING_KO"))
+                .andExpect(jsonPath("$.total").value(1)).andExpect(jsonPath("$.rows[0].rowNo").value(2));
+        // 기존 한국어만 보므로 Fix·원문·ID에만 있는 말은 안 걸린다
+        mvc.perform(get("/api/review/{id}/rows", pid).param("sheet", "Skill").param("q", "판결").param("qIn", "EXISTING_KO"))
+                .andExpect(jsonPath("$.total").value(0));
+        mvc.perform(get("/api/review/{id}/rows", pid).param("sheet", "Skill").param("q", "正义").param("qIn", "EXISTING_KO"))
                 .andExpect(jsonPath("$.total").value(0));
     }
 

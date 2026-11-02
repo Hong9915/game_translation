@@ -25,7 +25,8 @@ function detach(es: EventSource, listeners: Listeners) {
 
 /** 연결 하나를 열고 현재 구독자들을 모두 붙인다. 완전히 끊기면(readyState 2) 재연결을 예약하는 내부 리스너도 함께 붙인다. */
 function openStream(projectId: number, shared: Shared): EventSource {
-  const es = new EventSource(`${API_BASE}/projects/${projectId}/jobs/events`)
+  // 음수는 게임 전체 리뷰 화면(screenOf) — 그 게임 모든 파일의 공동 검토 이벤트가 오는 게임 스트림을 연다
+  const es = new EventSource(projectId < 0 ? `${API_BASE}/games/${-projectId}/review/events` : `${API_BASE}/projects/${projectId}/jobs/events`)
   es.addEventListener('open', () => { shared.failures = 0 })   // 연결에 성공하면 지연을 초기화한다
   es.addEventListener('error', () => scheduleReopen(projectId, shared, es))
   for (const listeners of shared.subscribers) attach(es, listeners)

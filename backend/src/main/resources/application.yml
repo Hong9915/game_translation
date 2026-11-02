@@ -7,6 +7,9 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+  flyway:
+    # 프로드 핫픽스 마이그레이션(V24_1)이 master의 더 높은 번호(V25)보다 늦게 들어온 로컬 DB에서도 적용되게.
+    out-of-order: true
   task:
     scheduling:
       # 주기 작업이 하나(presence 만료)뿐이라도 스레드 하나는 그 하나가 늦어지면 전부 멈춘다.
@@ -41,6 +44,8 @@ app:
   translate:
     batch-size: ${TRANSLATE_BATCH_SIZE:30}
     length-ratio-default: ${LENGTH_RATIO_DEFAULT:1.0}
+    # 번역 엔진: deepl(기본, DEEPL_AUTH_KEY 필요) | gpt(예전 GPT 번역으로 되돌리기)
+    engine: ${TRANSLATE_ENGINE:deepl}
   upload-max-mb: ${UPLOAD_MAX_MB:50}
   llm-concurrency: ${LLM_CONCURRENCY:8}
   cors-origins: ${CORS_ORIGINS:http://localhost:5173}

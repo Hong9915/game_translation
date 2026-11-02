@@ -14,7 +14,7 @@ public final class NormalizeDtos {
     public record SheetOption(String name, int rowCount, int headerRow, List<HeaderCell> headers, ColumnGuesser.Guess guess, List<List<String>> preview) {}
     public record SheetsResponse(List<SheetOption> sheets) {}
 
-    public record PairRequest(String srcCol, String enCol, NormalizeConfig.KoColMode koColMode, String koCol, String koHeader) {}
+    public record PairRequest(String srcCol, String enCol, NormalizeConfig.KoColMode koColMode, String koCol, String koHeader, String fixCol) {}
     public record NormalizeRequest(
             @NotBlank String sheetName,
             @Min(1) int headerRow,
@@ -24,8 +24,8 @@ public final class NormalizeDtos {
             Boolean proofreadExisting) {}
 
     /**
-     * kept: 기존 한국어를 그대로 살린 행(번역 대상에서 빠짐). intentional: 원문은 있지만 영어·한국어가 모두 N/A라
-     * 일부러 비워 둔 것으로 보고 건너뛴 행(skipped에 포함).
+     * kept: 기존 한국어를 그대로 살린 행(번역 대상에서 빠짐). intentional: 예전 정규화가 영어·한국어 모두 N/A라
+     * 건너뛴 행(skipped에 포함) — 새로 정규화하면 0이다.
      */
     public record NormalizeStats(long totalRows, long normalized, long skipped, long withEn, long kept, long intentional) {}
     public record SegmentPreview(Long id, String indexLabel, int pairIndex, String keyText, String srcText, String enText, String existingKoText) {

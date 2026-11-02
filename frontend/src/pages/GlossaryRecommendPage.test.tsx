@@ -5,18 +5,18 @@ import { mockFetch } from '../test/mockFetch'
 import { renderWithProviders } from '../test/render'
 import { GlossaryRecommendPage } from './GlossaryRecommendPage'
 
-const game = { id: 7, name: '테스트 게임', projects: 2, terms: 120, memory: 2318, lastUploadedAt: '2026-09-15T09:00:00Z', createdAt: '2026-09-01T00:00:00Z' }
+const game = { id: 7, name: '테스트 게임', projects: 2, memory: 2318, lastUploadedAt: '2026-09-15T09:00:00Z', createdAt: '2026-09-01T00:00:00Z' }
 const recommendations = [
   {
-    find: '伤害', sentences: 883, rows: 1440, termKo: '데미지',
+    find: '伤害', sentences: 883, rows: 1440,
     renderings: [
       { ko: '피해', rows: 1397, exampleSrc: '造成伤害', exampleKo: '피해를 입힌다' },
       { ko: '데미지', rows: 30, exampleSrc: '伤害提升', exampleKo: '데미지 증가' },
     ],
   },
-  { find: '图腾', sentences: 150, rows: 167, termKo: '토템', renderings: [{ ko: '토템', rows: 165, exampleSrc: '图腾升级', exampleKo: '토템 강화' }] },
-  { find: '敌人', sentences: 123, rows: 166, termKo: null, renderings: [{ ko: '적에게', rows: 70, exampleSrc: '对敌人造成伤害', exampleKo: '적에게 피해' }] },
-  { find: '即可', sentences: 118, rows: 130, termKo: null, renderings: [] },
+  { find: '图腾', sentences: 150, rows: 167, renderings: [{ ko: '토템', rows: 165, exampleSrc: '图腾升级', exampleKo: '토템 강화' }] },
+  { find: '敌人', sentences: 123, rows: 166, renderings: [{ ko: '적에게', rows: 70, exampleSrc: '对敌人造成伤害', exampleKo: '적에게 피해' }] },
+  { find: '即可', sentences: 118, rows: 130, renderings: [] },
 ]
 const routes = (recs: unknown = recommendations) => [
   // mockFetch는 url.includes로 첫 일치 route를 고른다 — 더 구체적인 경로를 앞에 둔다
@@ -37,11 +37,9 @@ describe('GlossaryRecommendPage', () => {
     expect(row.getByText('883')).toBeInTheDocument()
     expect(row.getByText('1,440')).toBeInTheDocument()
     expect(row.getByText('97%')).toBeInTheDocument()
-    expect(row.getByText('데미지')).toBeInTheDocument()
     expect(screen.getByText('4 / 4개')).toBeInTheDocument()
     // 지금 번역을 못 찾은 구절도 빼지 않고 보여 준다
     expect(within(rowOf('即可')).getByText('못 찾음')).toBeInTheDocument()
-    expect(within(rowOf('敌人')).getByText('용어집에 없음')).toBeInTheDocument()
   })
 
   it('행을 누르면 표기마다 행 수와 예문이 펼쳐지고, 다시 누르면 접힌다', async () => {
@@ -69,14 +67,6 @@ describe('GlossaryRecommendPage', () => {
 
     await userEvent.click(screen.getByLabelText('표기 비율 70% 미만만'))
     expect(screen.getByText('2 / 4개')).toBeInTheDocument()   // 敌人 42%, 即可 못 찾음
-    await userEvent.click(screen.getByLabelText('표기 비율 70% 미만만'))
-
-    await userEvent.click(screen.getByLabelText('용어집 번역과 다른 것만'))
-    expect(screen.getByText('1 / 4개')).toBeInTheDocument()   // 伤害: 피해 ≠ 데미지
-    await userEvent.click(screen.getByLabelText('용어집 번역과 다른 것만'))
-
-    await userEvent.click(screen.getByLabelText('용어집에 없는 것만'))
-    expect(screen.getByText('2 / 4개')).toBeInTheDocument()
   })
 
   it('열 제목을 누르면 그 열로 정렬한다', async () => {
@@ -86,15 +76,6 @@ describe('GlossaryRecommendPage', () => {
     await userEvent.click(screen.getByRole('columnheader', { name: /그 표기가 든 행/ }))
     const finds = screen.getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[1].textContent)
     expect(finds).toEqual(['即可', '敌人', '伤害', '图腾'])
-  })
-
-  it('옛 용어집 번역이 하나도 없는 게임이면 용어집 열과 필터를 숨긴다', async () => {
-    mockFetch(routes(recommendations.map((r) => ({ ...r, termKo: null }))))
-    render()
-    await screen.findByRole('row', { name: /^1 伤害 / })
-    expect(screen.queryByRole('columnheader', { name: '용어집 번역' })).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('용어집에 없는 것만')).not.toBeInTheDocument()
-    expect(screen.queryByText('용어집에 없음')).not.toBeInTheDocument()
   })
 
   it('추천할 구절이 없으면 기준을 알려 준다', async () => {

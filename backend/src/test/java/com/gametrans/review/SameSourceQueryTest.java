@@ -42,7 +42,7 @@ class SameSourceQueryTest extends IntegrationTest {
         long b = normalized(game);
         Segment mine = row(a, 2); // 正义裁决
 
-        List<Segment> same = segments.findSameSourceInGame(gameId(a), mine.getSrcText(), mine.getId());
+        List<Segment> same = segments.findSameSourceInGame(gameId(a), false, mine.getSrcText(), mine.getId());
 
         assertThat(same).hasSize(1);
         assertThat(same.get(0).getProjectId()).isEqualTo(b);
@@ -55,7 +55,7 @@ class SameSourceQueryTest extends IntegrationTest {
         normalized(TestProjects.freshGame());
         Segment mine = row(a, 2);
 
-        assertThat(segments.findSameSourceInGame(gameId(a), mine.getSrcText(), mine.getId())).isEmpty();
+        assertThat(segments.findSameSourceInGame(gameId(a), false, mine.getSrcText(), mine.getId())).isEmpty();
     }
 
     @Test
@@ -68,6 +68,6 @@ class SameSourceQueryTest extends IntegrationTest {
 
         mvc.perform(put("/api/segments/{id}/marks", other.getId()).contentType(MediaType.APPLICATION_JSON).content("{\"confirmed\":true}"));
 
-        assertThat(segments.findSameSourceInGame(gameId(a), mine.getSrcText(), mine.getId())).isEmpty();
+        assertThat(segments.findSameSourceInGame(gameId(a), false, mine.getSrcText(), mine.getId())).isEmpty();
     }
 }

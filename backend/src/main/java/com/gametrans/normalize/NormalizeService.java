@@ -29,17 +29,13 @@ public class NormalizeService {
     private final WorkbookInspector inspector;
     private final NormalizeConfigRepository configs;
     private final SegmentRepository segments;
-    private final com.gametrans.term.TermRepository terms;
-    private final com.gametrans.term.TermService termService;
     private final RevisionService revisions;
     private final MemoryService memory;
     private final TermMissService termMiss;
 
     public NormalizeService(ProjectService projects, WorkbookInspector inspector, NormalizeConfigRepository configs,
-                            SegmentRepository segments, com.gametrans.term.TermRepository terms,
-                            com.gametrans.term.TermService termService, RevisionService revisions,
+                            SegmentRepository segments, RevisionService revisions,
                             MemoryService memory, TermMissService termMiss) {
-        this.termService = termService;
         this.termMiss = termMiss;
         this.memory = memory;
         this.revisions = revisions;
@@ -47,7 +43,6 @@ public class NormalizeService {
         this.inspector = inspector;
         this.configs = configs;
         this.segments = segments;
-        this.terms = terms;
     }
 
     public SheetsResponse sheets(Long projectId, int headerRow) {
@@ -78,70 +73,81 @@ public class NormalizeService {
         cfg.setHeaderRow(req.headerRow());
         cfg.setKeyCol(blankToNull(req.keyCol()));
         cfg.setPairs(pairs);
-        cfg.setProofreadExisting(Boolean.TRUE.equals(req.proofreadExisting()));
-        cfg.setRetranslateExisting(!cfg.isProofreadExisting() && Boolean.TRUE.equals(req.retranslateExisting()));
+        // 최종 리뷰 버전(고친 한국어 열이 있는 쌍)은 이미 고친 파일이라 다시 번역·교정하지 않는다.
+        boolean finalReview = cfg.isFinalReview();
+        cfg.setProofreadExisting(!finalReview && Boolean.TRUE.equals(req.proofreadExisting()));
+        cfg.setRetranslateExisting(!finalReview && !cfg.isProofreadExisting() && Boolean.TRUE.equals(req.retranslateExisting()));
         configs.save(cfg);
 
-        // 용어는 원문 기준이라 프로젝트 전체에 걸쳐 있다. 방금 저장한 것까지 세어 시트가 이 하나뿐일 때만 비운다 —
-        // 시트가 여럿인데 지우면 다른 시트에서 확정한 용어까지 날아간다.
-        if (configs.countByProjectId(projectId) <= 1) terms.deleteByProjectId(projectId);
         segments.deleteByProjectIdAndSheetName(projectId, cfg.getSheetName());
         segments.flush();
 
         Integer keyIdx = cfg.getKeyCol() == null ? null : CellReference.convertColStringToIndex(cfg.getKeyCol());
         List<Segment> created = new ArrayList<>();
         List<Segment> kept = new ArrayList<>();
+        // 최종 리뷰 버전: 행마다 이미 고친 한국어(비지 않은 것만). 저장 뒤 id가 생기면 리비전으로 넣는다.
+        java.util.Map<Segment, String> fixed = new java.util.IdentityHashMap<>();
         for (WorkbookInspector.SheetRow row : rows) {
             for (int pi = 0; pi < pairs.size(); pi++) {
                 NormalizeConfig.ColumnPair pair = pairs.get(pi);
                 int srcIdx = CellReference.convertColStringToIndex(pair.srcCol());
                 Integer enIdx = pair.enCol() == null ? null : CellReference.convertColStringToIndex(pair.enCol());
                 Integer koIdx = pair.koCol() == null ? null : CellReference.convertColStringToIndex(pair.koCol());
+                Integer fixIdx = pair.fixCol() == null ? null : CellReference.convertColStringToIndex(pair.fixCol());
                 Segment s = new Segment();
                 s.setProjectId(projectId);
                 s.setSheetName(cfg.getSheetName());
                 s.setRowNo(row.rowNo());
                 s.setPairIndex(pi);
+                s.setFinalReview(finalReview);
                 // 쌍이 하나면 예전처럼 시트!행, 여럿이면 시트!행!원문열 로 어느 칸인지 구분한다.
                 s.setIndexLabel(cfg.getSheetName() + "!" + row.rowNo() + (pairs.size() > 1 ? "!" + pair.srcCol() : ""));
                 s.setKeyText(keyIdx == null ? null : blankToNull(cell(row, keyIdx)));
                 String koRaw = koIdx == null ? null : cell(row, koIdx);
                 String src = srcOrNull(cell(row, srcIdx), koRaw);
                 String en = enIdx == null ? null : emptyToNull(cell(row, enIdx));
-                String enRaw = enIdx == null ? null : cell(row, enIdx);
                 s.setSrcText(src);
                 s.setEnText(en);
                 s.setExistingKoText(blankToNull(koRaw));
                 if (src == null) {
                     s.setSkipped(true);
                     s.setSkipReason(Segment.SkipReason.EMPTY_SRC);
-                } else if (koIdx != null && EmptyMarkers.isMarker(koRaw) && enIdx != null && EmptyMarkers.isMarker(enRaw)) {
-                    // 한국어·영어 칸에 둘 다 N/A 같은 표시가 적혀 있으면 게임에서 안 쓰는 행으로 보고 손대지 않는다.
-                    s.setSkipped(true);
-                    s.setSkipReason(Segment.SkipReason.INTENTIONAL);
                 } else if (koIdx != null && !EmptyMarkers.isEmpty(koRaw) && !cfg.isRetranslateExisting()) {
                     kept.add(s);
                     s.setProofPending(cfg.isProofreadExisting());
                 }
+                String fixRaw = fixIdx == null ? null : cell(row, fixIdx);
+                if (!s.isSkipped() && !EmptyMarkers.isEmpty(fixRaw)) fixed.put(s, fixRaw.trim());
                 created.add(s);
             }
         }
         segments.saveAll(created);
         List<TranslationRevision> seed = new ArrayList<>();
         for (Segment s : kept) seed.add(TranslationRevision.of(s.getId(), 0, s.getExistingKoText().trim(), TranslationRevision.Author.EXISTING));
+        // 이미 고친 한국어는 기존 한국어 다음 판(기존이 없으면 0차)이 된다 — 기존과 같으면 넣지 않는다.
+        java.util.Set<Segment> keptSet = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        keptSet.addAll(kept);
+        for (var e : fixed.entrySet()) {
+            Segment s = e.getKey();
+            boolean hasExisting = keptSet.contains(s);
+            if (hasExisting && EmptyMarkers.norm(e.getValue()).equals(EmptyMarkers.norm(s.getExistingKoText()))) continue;
+            seed.add(TranslationRevision.of(s.getId(), hasExisting ? 1 : 0, e.getValue(), TranslationRevision.Author.IMPORTED));
+        }
         revisions.saveAll(seed);
         // 세그먼트와 0차 리비전이 실제 DB에 반영돼야 latest_ko 트리거가 돌고, 아래 이어받기 조회가 방금 넣은
         // 값(과 이 프로젝트 자신은 후보에서 빠진다는 사실)을 제대로 본다.
         segments.flush();
-        inheritDecidedKo(projectId, p.getGame().getId(), cfg.getSheetName(), created);
+        inheritDecidedKo(projectId, p.getGame().getId(), cfg.getSheetName(), finalReview, created);
         // 올린 파일에 이미 있던 한국어도 이 게임의 메모리가 된다. 사람이 고친 문장은 덮지 않는다.
         java.util.Map<String, String> memoryPairs = new java.util.LinkedHashMap<>();
-        for (Segment s : created) if (s.getExistingKoText() != null && !EmptyMarkers.isEmpty(s.getExistingKoText()) && s.getSrcText() != null && !s.isSkipped())
-            memoryPairs.putIfAbsent(s.getSrcText(), s.getExistingKoText().trim());
+        // 최종 리뷰 버전이면 기존 한국어 대신 이미 고친 문장을 기억한다.
+        for (Segment s : created) {
+            if (s.getSrcText() == null || s.isSkipped()) continue;
+            String ko = fixed.containsKey(s) ? fixed.get(s)
+                    : s.getExistingKoText() != null && !EmptyMarkers.isEmpty(s.getExistingKoText()) ? s.getExistingKoText().trim() : null;
+            if (ko != null) memoryPairs.putIfAbsent(s.getSrcText(), ko);
+        }
         memory.rememberAll(projectId, memoryPairs, MemoryEntry.Source.EXISTING, false);
-        // 용어를 남겨 둔 경우(시트가 여럿), 방금 만든 이 시트의 행에도 확정 용어를 다시 붙인다.
-        // 같은 트랜잭션에서 만든 세그먼트라 managed 상태이고, 용어가 없으면 아무것도 하지 않는다.
-        termService.relinkConfirmed(projectId, cfg.getSheetName());
         // 검수 전용 파일은 용어·번역 단계를 건너뛰고 바로 검수로 간다.
         projects.bumpStep(projectId, p.isReviewOnly() ? 5 : 3);
         // 방금 설정한 시트를 보여 준다(미리보기는 그 시트만).
@@ -149,7 +155,7 @@ public class NormalizeService {
     }
 
     /**
-     * 새로 정규화한 행 중 기존 한국어가 없는 행에, 같은 게임의 다른 파일이 이미 정한 번역(Fix)을 이어받게 한다.
+     * 새로 정규화한 행 중 기존 한국어가 없는 행에, 같은 게임·같은 레인의 다른 파일이 이미 정한 번역(Fix)을 이어받게 한다.
      * 원문이 같은 다른 프로젝트의 행들이 최신 한국어를 하나로만 정했을 때만 이어받는다 — 서로 다르면 그대로
      * 비워 두고 DUP_CONFLICT 필터로 사람이 고르게 한다. author=MEMORY, revision 0(새 세그먼트라 아직
      * 리비전이 없다)으로 남긴다.
@@ -160,8 +166,8 @@ public class NormalizeService {
      * flush 때 그 칸만(DynamicUpdate) 쓰이게 한다. 판정 대상 한국어는 방금 넣은 이어받은 문장이다 —
      * latest_ko는 트리거가 DB에서만 갱신하므로 managed 사본의 latestKo는 아직 비어 있다.
      */
-    private void inheritDecidedKo(Long projectId, Long gameId, String sheetName, List<Segment> created) {
-        List<SegmentRepository.InheritedKo> found = segments.findInheritableKo(gameId, projectId, sheetName);
+    private void inheritDecidedKo(Long projectId, Long gameId, String sheetName, boolean finalReview, List<Segment> created) {
+        List<SegmentRepository.InheritedKo> found = segments.findInheritableKo(gameId, finalReview, projectId, sheetName);
         if (found.isEmpty()) return;
         for (SegmentRepository.InheritedKo row : found) revisions.add(row.getSegmentId(), row.getKo(), TranslationRevision.Author.MEMORY, null);
         log.info("같은 게임에서 {}행 이어받음", found.size());
@@ -190,11 +196,16 @@ public class NormalizeService {
             String ko = readsExisting ? upper(r.koCol()) : null;
             if (readsExisting && ko == null) throw new IllegalArgumentException("기존 한국어 열을 읽으려면 그 열을 지정해야 합니다.");
             String header = r.koHeader() == null || r.koHeader().isBlank() ? "KO" : r.koHeader().trim();
+            // 최종 리뷰 버전: 고친 한국어 열은 기존 한국어 열과 함께만, 다른 열이어야 한다. 그 열에 쓰므로 새 열 이름은 없다.
+            String fix = upper(r.fixCol());
+            if (fix != null && !readsExisting) throw new IllegalArgumentException("수정 한국어 열을 읽으려면 기존 한국어 열도 지정해야 합니다.");
+            if (fix != null && fix.equals(ko)) throw new IllegalArgumentException("수정 한국어 열과 기존 한국어 열이 같습니다.");
+            if (fix != null) mode = NormalizeConfig.KoColMode.EXISTING_TO_NEW;
             // 쓰는 곳이 겹치는지 본다: 같은 열에 쓰면 그 열 문자, 새 열에 쓰면 새 열 이름
-            String target = mode == NormalizeConfig.KoColMode.EXISTING ? ko : "NEW:" + header;
+            String target = fix != null ? fix : mode == NormalizeConfig.KoColMode.EXISTING ? ko : "NEW:" + header;
             if (!koTargets.add(target)) throw new IllegalArgumentException("두 열 쌍이 같은 한국어 열(" + target.replace("NEW:", "새 열 ") + ")에 쓰도록 되어 있습니다.");
             out.add(new NormalizeConfig.ColumnPair(upper(r.srcCol()), upper(r.enCol()), mode, ko,
-                    mode == NormalizeConfig.KoColMode.EXISTING ? null : header));
+                    mode == NormalizeConfig.KoColMode.EXISTING || fix != null ? null : header, fix));
         }
         return out;
     }

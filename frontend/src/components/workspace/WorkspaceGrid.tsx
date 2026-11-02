@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import type { GlossaryKind, MarkKey, MarksPatch, RowHistoryEntry, RowShortenResult, WorkspaceRow } from '../../api/types'
 import { COLS, distributePaste, move, nextFixRow, type ArrowKey, type Cell, type Col } from '../../lib/gridNav'
+import { DEFAULT_ROW_HEIGHT, indexAt, rowOffsets, UNHIDEABLE, useGridLayout, type WidthCol } from '../../lib/gridLayout'
 import { lengthFlagged } from '../../lib/lengthCheck'
 import { relativeTime } from '../../lib/relativeTime'
 import { Anchored } from '../ui/Anchored'
@@ -9,12 +10,16 @@ import { JosaPopover } from './JosaPopover'
 import { RowHistoryPopover } from './RowHistoryPopover'
 import { ShortenPopover } from './ShortenPopover'
 
-export const ROW_HEIGHT = 26
+export const ROW_HEIGHT = DEFAULT_ROW_HEIGHT
 const OVERSCAN = 50
 const FALLBACK_VIEW_ROWS = 40   // jsdom처럼 높이를 모를 때
 
 export interface WorkspaceGridProps {
   rows: (WorkspaceRow | undefined)[]
+  /** 게임 전체 리뷰 화면이면 ID 뒤에 "파일 / 시트" 열을 보인다(설계 2026-10-12 §2). 키보드로는 건너뛰는 표시 전용 열. */
+  placeOf?: (r: WorkspaceRow) => string
+  /** 최종 리뷰 시트면 최종 수정 열을 보이고, Fix 칸을 달라짐 노랑 대신 최종 수정 연두로 칠한다. */
+  finalReview?: boolean
   ratio: number
   busy: Set<number>
   highlighted: Set<number>
@@ -30,11 +35,12 @@ export interface WorkspaceGridProps {
   /** 일괄 체크가 적용될 행 수(쪽 보기면 그 쪽, 전체 보기면 조건에 걸린 전부). 창에 보인다. */
   viewCount: number
   /** 원문 셀의 ×N 칩을 누르면 그 원문으로 검색어(중복 필터)를 건다. */
-  onFilterDuplicates: (src: string) => void
+  /** ×N 칩 메뉴에서 고른 모아 보기. exact = 원문이 같은 행, contains = 원문에 이 글이 든 행. */
+  onFilterDuplicates: (src: string, mode: 'exact' | 'contains') => void
   /** 원문·Fix 셀 우클릭 메뉴에서 "단어장에 추가"를 고르면 부른다. whole=true면 셀 전체 값, false면 그 안의 선택 영역. */
   onAddToGlossary: (kind: GlossaryKind, text: string, whole: boolean) => void
-  /** 원문 셀 우클릭 메뉴의 "GPT 번역"에서 추가 지시(빈 문자열 가능)를 넣고 번역을 누르면 부른다. 결과는 그 행의 Fix를 덮어쓴다. */
-  onTranslate: (row: WorkspaceRow, instructions: string) => void
+  /** 원문 셀 우클릭 메뉴의 "DeepL 번역"을 누르면 부른다. 결과는 그 행의 Fix를 덮어쓴다. */
+  onTranslate: (row: WorkspaceRow) => void
   /** 기존 한국어·Fix 셀 우클릭 "짧게 줄이기"에서 GPT 후보를 받는다(저장 안 함). 고른 후보는 onSave로 저장한다. */
   onShorten: (row: WorkspaceRow, maxChars?: number) => Promise<RowShortenResult>
   /** Fix 셀 `조사` 배지 창의 [적용] — 그 행의 제안을 종류 상관없이 모두 고친다. */
@@ -43,7 +49,7 @@ export interface WorkspaceGridProps {
   onJosaIgnore: (row: WorkspaceRow) => void
   /** 우클릭 "변경 내역 보기" — 그 행의 판을 최신부터 받는다. */
   onHistory: (row: WorkspaceRow) => Promise<RowHistoryEntry[]>
-  /** GPT 번역 응답을 기다리는 행. Fix 칸에 "GPT 번역 중…"을 보이고 편집을 막는다. */
+  /** 번역 응답을 기다리는 행. Fix 칸에 "번역 중…"을 보이고 편집을 막는다. */
   translating: Set<number>
   onVisibleRange: (start: number, end: number) => void
   onFocusCell?: (id: number | null) => void
@@ -59,10 +65,7 @@ export interface GridPosition { cell: Cell | null; scrollTop: number }
 
 const HEADERS: Record<Col, string> = {
   idx: '#', id: 'ID', src: '간체 원문', en: '영어', existingKo: '기존 한국어', fix: '수정 한국어 (Fix)',
-  review1: 'A', review2: 'B', needsCheck: '확인 필요', confirmed: '확정', note: '비고',
-}
-const WIDTHS: Record<Col, string> = {
-  idx: 'w-12', id: 'w-32', src: 'w-56', en: 'w-52', existingKo: 'w-56', fix: 'w-72', review1: 'w-14', review2: 'w-14', needsCheck: 'w-14', confirmed: 'w-14', note: 'w-48',
+  review1: 'A', review2: 'B', needsCheck: '확인 필요', confirmed: '확정', finalMark: '최종 수정', note: '비고',
 }
 /**
  * # 칸을 마지막으로 고친 사람의 색으로(2026-10-08): 왼쪽 띠와 옅은 바탕. 바탕은 칸 배경색 위에 그라디언트로 얹는다 —
@@ -74,19 +77,15 @@ function editorTint(color: string | undefined): CSSProperties | undefined {
   return { boxShadow: `inset 3px 0 0 ${color}`, backgroundImage: `linear-gradient(${tint}, ${tint})` }
 }
 
-const MARKS: MarkKey[] = ['review1', 'review2', 'needsCheck', 'confirmed']
+const MARKS: MarkKey[] = ['review1', 'review2', 'needsCheck', 'confirmed', 'finalMark']
 const isMark = (c: Col): c is MarkKey => (MARKS as string[]).includes(c)
 /** 글을 편집하는 칸. Fix는 저장(onSave), 비고는 onMarks로 간다. */
 type TextCol = 'fix' | 'note'
 const isText = (c: Col): c is TextCol => c === 'fix' || c === 'note'
 const ARROWS: ArrowKey[] = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']
-// 직전에 쓴 GPT 번역 추가 지시. 브라우저마다 따로 기억한다 — 비공개 창 등에서 저장소가 막혀도 번역은 된다.
-const INSTRUCTIONS_KEY = 'gametrans.rowTranslateInstructions'
-const loadInstructions = () => { try { return localStorage.getItem(INSTRUCTIONS_KEY) ?? '' } catch { return '' } }
-const storeInstructions = (text: string) => { try { localStorage.setItem(INSTRUCTIONS_KEY, text) } catch { /* 기억만 못 한다 */ } }
 
 /** 엑셀식 검수 표. 조회·저장은 부모(WorkspacePage)가 하고, 여기서는 선택·편집·가상 스크롤만 다룬다. */
-export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSave, onMarks, onBulkMarks, viewCount, onFilterDuplicates, onAddToGlossary, onTranslate, onShorten, onJosaApply, onJosaIgnore, onHistory, translating, onVisibleRange, onFocusCell, onSelect, onPosition, restore, onRestored }: WorkspaceGridProps) {
+export function WorkspaceGrid({ rows, placeOf, finalReview = false, ratio, busy, highlighted, failedText, onSave, onMarks, onBulkMarks, viewCount, onFilterDuplicates, onAddToGlossary, onTranslate, onShorten, onJosaApply, onJosaIgnore, onHistory, translating, onVisibleRange, onFocusCell, onSelect, onPosition, restore, onRestored }: WorkspaceGridProps) {
   const box = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewHeight, setViewHeight] = useState(0)
@@ -97,15 +96,14 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
   const [editing, setEditing] = useState<{ id: number; col: TextCol; text: string; where: 'cell' | 'bar' } | null>(null)
   const barRef = useRef<HTMLTextAreaElement>(null)
   // 원문·Fix 셀 우클릭 메뉴. 좌표는 우클릭 시점의 화면 좌표(fixed 위치용).
-  // row는 원문 셀에서 연 메뉴에만 있다 — "GPT 번역" 항목이 그 행을 번역한다.
+  // row는 원문 셀에서 연 메뉴에만 있다 — "DeepL 번역" 항목이 그 행을 번역한다.
   // shorten은 기존 한국어·Fix 셀에서 연 메뉴에만 있다 — "짧게 줄이기" 항목이 그 행의 한국어를 줄인다.
   // history는 # 칸·원문·기존 한국어·Fix 칸 메뉴에 있다 — "변경 내역 보기". # 칸 메뉴는 text가 비어 단어장 항목이 없다.
-  const [menu, setMenu] = useState<{ x: number; y: number; kind: GlossaryKind; text: string; whole: boolean; row?: WorkspaceRow; shorten?: WorkspaceRow; history?: WorkspaceRow } | null>(null)
+  // hideCol은 열 머리글 메뉴에만 있다 — "열 숨기기".
+  const [menu, setMenu] = useState<{ x: number; y: number; kind: GlossaryKind; text: string; whole: boolean; row?: WorkspaceRow; shorten?: WorkspaceRow; history?: WorkspaceRow; hideCol?: WidthCol; dup?: string } | null>(null)
   // 우클릭 "변경 내역 보기" 창. 메뉴와 같은 자리에 뜬다.
   const [historyOf, setHistoryOf] = useState<{ x: number; y: number; row: WorkspaceRow } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-  // GPT 번역 추가 지시 창. 메뉴와 같은 자리에 뜬다.
-  const [ask, setAsk] = useState<{ x: number; y: number; row: WorkspaceRow; text: string } | null>(null)
   // 체크 머리글 더블클릭 일괄 체크 창. 머리글 바로 아래에 뜬다.
   const [bulk, setBulk] = useState<{ x: number; y: number; key: MarkKey } | null>(null)
   // 용어 불일치 점에 마우스를 올리면 바로 뜨는 목록(브라우저 title은 1초쯤 늦고 8px 점이라 맞추기 어렵다).
@@ -119,6 +117,16 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
   // 또 commit하는 걸 막는 플래그.
   const finishingRef = useRef(false)
   const total = rows.length
+
+  // 열 숨기기·행 높이·열 너비(2026-10-12): 화면에만 걸리고 이 브라우저에 기억한다. 행 높이는 모든 행이 같이 바뀐다.
+  const layout = useGridLayout()
+  const { hiddenCols, rowHeight, widths } = layout
+  const offsets = useMemo(() => rowOffsets(new Array<number>(rows.length).fill(rowHeight)), [rows.length, rowHeight])
+  // 최종 수정 열은 최종 리뷰 시트에서만(설계 2026-10-17)
+  const show = (c: WidthCol) => !hiddenCols.has(c) && (c !== 'finalMark' || finalReview)
+  const shownCols = COLS.filter(show)
+  const colOrder: WidthCol[] = (placeOf ? COLS.flatMap((c): WidthCol[] => (c === 'id' ? [c, 'place'] : [c])) : [...COLS]).filter(show)
+  const tableWidth = colOrder.reduce((n, c) => n + widths[c], 0)
 
   const position = useRef<GridPosition>({ cell: null, scrollTop: 0 })
   const setCell = useCallback((c: Cell | null) => {
@@ -145,16 +153,19 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
   }, [restore, total, setCell, onRestored])
 
   useLayoutEffect(() => { setViewHeight(box.current?.clientHeight ?? 0) }, [])
-  const viewRows = viewHeight > 0 ? Math.ceil(viewHeight / ROW_HEIGHT) : FALLBACK_VIEW_ROWS
-  const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
-  const end = Math.min(total, Math.floor(scrollTop / ROW_HEIGHT) + viewRows + OVERSCAN)   // exclusive
+  // 아는 행 아래(목록이 아직 비었거나 짧을 때)도 같은 행 높이로 이어 센다 — 스크롤 위치가 가리키는 쪽을 그대로 받으러 가게.
+  const rowAt = (y: number) => (y >= offsets[total] ? total + Math.floor((y - offsets[total]) / rowHeight) : indexAt(offsets, y))
+  const firstVisible = rowAt(scrollTop)
+  const lastVisible = viewHeight > 0 ? rowAt(scrollTop + viewHeight) : firstVisible + FALLBACK_VIEW_ROWS
+  const start = Math.max(0, firstVisible - OVERSCAN)
+  const end = Math.min(total, lastVisible + 1 + OVERSCAN)   // exclusive
   useEffect(() => { onVisibleRange(start, end) }, [start, end, onVisibleRange])
 
   // 선택한 행이 보이도록 스크롤
   const scrollIntoView = (r: number) => {
     const el = box.current
     if (!el || el.clientHeight === 0) return
-    const top = r * ROW_HEIGHT, bottom = top + ROW_HEIGHT
+    const top = offsets[r] ?? 0, bottom = offsets[r + 1] ?? top + ROW_HEIGHT
     if (top < el.scrollTop) el.scrollTop = top
     else if (bottom > el.scrollTop + el.clientHeight - ROW_HEIGHT) el.scrollTop = bottom - el.clientHeight + ROW_HEIGHT
   }
@@ -185,6 +196,19 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
     if (next !== null) { setCell({ row: next, col: editing.col }); scrollIntoView(next) }
   }
   const toggleMark = (row: WorkspaceRow, key: MarkKey) => onMarks(row, { [key]: !row[key] } as MarksPatch)
+  // 칸은 마우스를 누르는 순간 고른다(2026-10-12) — 표 전체가 select-none이고 고른 칸만 글자 선택이 열리므로,
+  // 드래그를 시작한 칸이 곧 글자를 고를 수 있는 유일한 칸이 되어 옆 칸·아래 행으로 번지지 않는다. 우클릭은 고르지 않는다.
+  const pick = (i: number, c: Col) => (e: MouseEvent<HTMLTableCellElement>) => {
+    if (e.button !== 0) return
+    // 위 입력줄에서 고치던 중이면 먼저 blur해 저장한다 — 여기서 칸이 바뀌면 입력줄이 focus를 잃기 전에 사라져
+    // blur 저장이 안 불리고 editing이 남아 키보드가 먹통이 된다(글이 아닌 칸을 누를 때).
+    if (editing?.where === 'bar') barRef.current?.blur()
+    setCell({ row: i, col: c })
+  }
+  // 고른 칸의 값 글자(배지·칩 제외). 가상 스크롤로 그 행이 DOM에 없으면 null.
+  const cellTextEl = (c: Cell) => box.current?.querySelector<HTMLElement>(`tr[data-row="${c.row}"] [data-cell-text="${c.col}"]`) ?? null
+  // 칸을 키보드로 옮기면 앞 칸에서 긁어 둔 글자 선택을 지운다 — 남아 있으면 Ctrl+C가 옛 칸 글자를 복사한다.
+  const clearTextSelection = () => window.getSelection()?.removeAllRanges()
   // 편집하던 행이 목록에서 빠졌으면(필터 결과가 바뀜) 편집을 버린다 — 다른 행에 저장하지 않는다.
   const editingGone = editing !== null && !rows.some((r) => r?.id === editing.id)
   useEffect(() => { if (editingGone) { setEditing(null); onFocusCell?.(null) } }, [editingGone, onFocusCell])
@@ -242,6 +266,35 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
     closeShorten()
   }
 
+  const hideCol = () => {
+    if (!menu?.hideCol) return
+    const c = menu.hideCol
+    layout.hideCol(c)
+    // 고른 칸이 그 열에 있었으면 Fix로 옮긴다
+    if (cell && cell.col === c) setCell({ ...cell, col: 'fix' })
+    setMenu(null)
+  }
+
+  // # 칸 아래 경계를 끌면 그 행 높이, 머리글 오른쪽 경계를 끌면 그 열 너비를 바꾼다. 놓을 때까지 window에서 마우스를 따라간다.
+  const dragFrom = (e: MouseEvent<HTMLDivElement>, axis: 'x' | 'y', apply: (delta: number) => void) => {
+    e.preventDefault(); e.stopPropagation()
+    const from = axis === 'x' ? e.clientX : e.clientY
+    const onMove = (ev: globalThis.MouseEvent) => apply((axis === 'x' ? ev.clientX : ev.clientY) - from)
+    const onUp = (ev: globalThis.MouseEvent) => {
+      onMove(ev)
+      window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp)
+  }
+  const startRowResize = (e: MouseEvent<HTMLDivElement>) => {
+    const h0 = rowHeight
+    dragFrom(e, 'y', (d) => layout.setRowHeight(h0 + d))
+  }
+  const startColResize = (e: MouseEvent<HTMLDivElement>, c: WidthCol) => {
+    const w0 = widths[c]
+    dragFrom(e, 'x', (d) => layout.setWidth(c, w0 + d))
+  }
+
   const openHistory = () => {
     if (!menu?.history) return
     setHistoryOf({ x: menu.x, y: menu.y, row: menu.history })
@@ -251,34 +304,65 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
   // 창을 연 뒤 저장·실시간 반영으로 바뀐 행을 쓴다(되돌리기 단추가 지금 본문과 비교한다)
   const historyRow = historyOf ? (rows.find((r) => r?.id === historyOf.row.id) ?? historyOf.row) : null
 
-  const openAsk = () => {
+  // 원문 우클릭 "DeepL 번역": 지시 창 없이 바로 번역한다(DeepL은 지시를 따르지 못한다 — 문장을 고치려면 "명령으로 고치기")
+  const translateRow = () => {
     if (!menu?.row) return
-    setAsk({ x: menu.x, y: menu.y, row: menu.row, text: loadInstructions() })
+    const row = menu.row
     setMenu(null)
+    box.current?.focus()
+    onTranslate(row)
   }
-  const closeAsk = () => { setAsk(null); box.current?.focus() }
-  const submitAsk = () => {
-    if (!ask) return
-    const text = ask.text.trim()
-    storeInstructions(text)
-    onTranslate(ask.row, text)
-    closeAsk()
-  }
-  const onAskKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submitAsk() }
-    else if (e.key === 'Escape') { e.preventDefault(); closeAsk() }
-  }
+
+
+  // 엑셀 수식 입력줄처럼 선택한 칸의 전체 글을 표 위에 보인다. 칸은 한 줄이라 긴 글이 잘리기 때문이다.
+  // Fix를 편집하는 중이면 입력 중인 글을 그대로 따라 보인다.
+  const selRow = cell ? rows[cell.row] : undefined
+  const barText = !cell || !selRow ? null
+    : cell.col === 'fix' ? (editing?.id === selRow.id && editing.col === 'fix' ? editing.text : failedText.get(selRow.id)?.text ?? selRow.fix ?? '')
+    : cell.col === 'note' ? (editing?.id === selRow.id && editing.col === 'note' ? editing.text : selRow.note ?? '')
+    : cell.col === 'src' ? selRow.src
+    : cell.col === 'en' ? selRow.en ?? ''
+    : cell.col === 'existingKo' ? selRow.existingKo ?? ''
+    : cell.col === 'id' ? selRow.keyText ?? selRow.indexLabel
+    : null
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (editing) return   // textarea가 처리한다
+    // 단축키는 e.code로 본다 — 한글 자판이면 e.key가 'ㅁ'·'ㅊ'로 온다
+    const mod = (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey
+    if (mod && e.code === 'KeyA') {
+      // 화면 전체 대신 고른 칸의 값 글자만 고른다. 값 글자가 없는 칸(#·체크·번역 중)이면 아무것도 안 고른다.
+      e.preventDefault()
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      const el = cell && cellTextEl(cell)
+      if (sel && el) { const range = document.createRange(); range.selectNodeContents(el); sel.addRange(range) }
+      return
+    }
+    if (mod && e.code === 'KeyC') {
+      // 고른 칸 안에 긁어 둔 글자가 있으면 그 부분만(브라우저 기본 복사). 없으면 고른 칸 전체 값 — 칸이 좁아 잘려 보여도 전부.
+      const sel = window.getSelection()
+      const td = cell ? cellTextEl(cell)?.closest('td') : null
+      if (sel && sel.toString() !== '' && td && sel.anchorNode && td.contains(sel.anchorNode)) return
+      if (!barText) return
+      e.preventDefault()
+      navigator.clipboard?.writeText(barText).catch(() => { /* 클립보드 권한이 없으면 복사만 못 한다 */ })
+      return
+    }
     // 아직 아무 칸도 안 골랐으면 첫 키는 1행 Fix를 고르는 데 쓴다(엑셀의 A1처럼 늘 같은 자리에서 시작)
     if (!cell) { if (total > 0) setCell({ row: 0, col: 'fix' }); return }
     const row = rows[cell.row]
-    if (ARROWS.includes(e.key as ArrowKey)) { e.preventDefault(); const c = move(cell, e.key as ArrowKey, total); setCell(c); scrollIntoView(c.row); return }
+    if (ARROWS.includes(e.key as ArrowKey)) {
+      e.preventDefault()
+      // 좌우는 숨긴 열을 건너뛴다. 끝까지 숨긴 열뿐이면 그 자리에 있는다.
+      let c = move(cell, e.key as ArrowKey, total)
+      while (!show(c.col)) { const n = move(c, e.key as ArrowKey, total); if (n.col === c.col) { c = cell; break } c = n }
+      clearTextSelection(); setCell(c); scrollIntoView(c.row); return
+    }
     if (e.key === 'Tab') {
       e.preventDefault()
       const next = nextFixRow(cell.row, total, e.shiftKey ? -1 : 1)
-      if (next !== null) { setCell({ row: next, col: 'fix' }); scrollIntoView(next) }
+      if (next !== null) { clearTextSelection(); setCell({ row: next, col: 'fix' }); scrollIntoView(next) }
       return
     }
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (row) toggleMark(row, 'review1'); return }
@@ -318,24 +402,33 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
   const visible: number[] = []
   for (let i = start; i < end; i++) visible.push(i)
 
-  // 엑셀 수식 입력줄처럼 선택한 칸의 전체 글을 표 위에 보인다. 칸은 한 줄이라 긴 글이 잘리기 때문이다.
-  // Fix를 편집하는 중이면 입력 중인 글을 그대로 따라 보인다.
-  const selRow = cell ? rows[cell.row] : undefined
-  const barText = !cell || !selRow ? null
-    : cell.col === 'fix' ? (editing?.id === selRow.id && editing.col === 'fix' ? editing.text : failedText.get(selRow.id)?.text ?? selRow.fix ?? '')
-    : cell.col === 'note' ? (editing?.id === selRow.id && editing.col === 'note' ? editing.text : selRow.note ?? '')
-    : cell.col === 'src' ? selRow.src
-    : cell.col === 'en' ? selRow.en ?? ''
-    : cell.col === 'existingKo' ? selRow.existingKo ?? ''
-    : cell.col === 'id' ? selRow.keyText ?? selRow.indexLabel
-    : null
+  // 열 머리글 우클릭: "열 숨기기". # 칸과 Fix는 숨기지 않는다(메뉴를 열지 않는다).
+  const openColMenu = (e: MouseEvent<HTMLTableCellElement>, c: WidthCol) => {
+    e.preventDefault()
+    if (UNHIDEABLE.has(c)) { setMenu(null); return }
+    setMenu({ x: e.clientX, y: e.clientY, kind: 'KO', text: '', whole: true, hideCol: c })
+  }
+
+  const widthHandle = (c: WidthCol, label: string) => (
+    <div role="separator" aria-orientation="vertical" aria-label={`${label} 너비 조절`} title="끌어서 열 너비 조절 · 더블클릭하면 원래대로"
+      onMouseDown={(e) => startColResize(e, c)} onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => { e.stopPropagation(); layout.resetWidth(c) }}
+      className="absolute -right-[3px] top-0 z-10 h-full w-[6px] cursor-col-resize" />
+  )
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
     {/* 높이를 고정해 칸을 옮길 때마다 표가 위아래로 출렁이지 않게 한다. 넘치면 이 안에서 스크롤한다. */}
     <div role="region" aria-label="선택한 칸 내용" className="flex h-[70px] shrink-0 border-b border-line text-[13px]">
-      <div className="flex w-40 shrink-0 items-start border-r border-line bg-tableHead px-2 py-1.5 text-xs text-muted">
-        {cell && selRow ? `${selRow.rowNo}행 · ${HEADERS[cell.col]}` : ''}
+      <div className="flex w-40 shrink-0 flex-col items-start justify-between border-r border-line bg-tableHead px-2 py-1.5 text-xs text-muted">
+        <span>{cell && selRow ? `${selRow.rowNo}행 · ${HEADERS[cell.col]}` : ''}</span>
+        {hiddenCols.size > 0 && (
+          <button type="button" onClick={layout.showAllCols}
+            title={`숨긴 열: ${[...hiddenCols].map((c) => (c === 'place' ? '파일 / 시트' : HEADERS[c])).join(', ')} — 누르면 모두 다시 보입니다`}
+            className="press rounded px-1 text-[11px] text-primary hover:bg-primarySoft">
+            숨긴 열 {hiddenCols.size}개 · 모두 보이기
+          </button>
+        )}
       </div>
       {cell && isText(cell.col) && selRow ? (
         // Fix·비고 칸이면 엑셀 수식 입력줄처럼 여기서 바로 고친다. 키는 칸 안 편집 상자와 같다(Enter 저장·Esc 취소).
@@ -344,6 +437,11 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
           onFocus={onBarFocus} onChange={(e) => setEditing({ id: selRow.id, col: cell.col as TextCol, text: e.target.value, where: 'bar' })}
           onKeyDown={onEditorKey} onBlur={onEditorBlur}
           className="min-w-0 flex-1 resize-none break-keep bg-transparent px-2 py-1.5 leading-[1.45] outline-none [overflow-wrap:anywhere] focus:bg-white focus:shadow-[inset_0_0_0_2px_#107c41]" />
+      ) : barText !== null ? (
+        // 원문·영어·기존 한국어·ID는 읽기 전용 글 상자로 — 눌러서 ⌘A·⌘C를 하면 Fix 입력줄처럼 이 안 글만 잡힌다. Esc는 표로.
+        <textarea aria-label="선택한 칸 내용 보기" readOnly value={barText}
+          onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); box.current?.focus() } }}
+          className="min-w-0 flex-1 resize-none break-keep bg-transparent px-2 py-1.5 leading-[1.45] outline-none [overflow-wrap:anywhere] focus:bg-white focus:shadow-[inset_0_0_0_2px_#d0d5dd]" />
       ) : (
         <div className="min-w-0 flex-1 select-text overflow-y-auto whitespace-pre-wrap break-keep px-2 py-1.5 leading-[1.45] [overflow-wrap:anywhere]">
           {barText ?? <span className="text-muted">칸을 고르면 전체 내용이 여기 보입니다</span>}
@@ -353,31 +451,40 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
     <div ref={box} role="grid" tabIndex={0} aria-rowcount={total} onKeyDown={onKeyDown} onPaste={onPaste} onScroll={(e) => onBoxScroll(e.currentTarget.scrollTop)}
       className="min-h-0 flex-1 overflow-auto outline-none">
       {/* table-fixed는 표 너비가 정해져 있어야 먹는다. w-max(내용 너비)면 스크롤로 보이는 행이 바뀔 때마다 열 너비가 출렁인다.
-          1480px = WIDTHS의 합(48+128+224+208+224+288+56·3+192). WIDTHS를 바꾸면 같이 바꾼다. */}
-      <table className="w-[1480px] table-fixed border-collapse text-[13px]">
+          표 너비 = 열 너비의 합(열 너비는 머리글 경계를 끌어 바꾼다). */}
+      <table className="table-fixed select-none border-collapse text-[13px]" style={{ width: tableWidth }}>
+        <colgroup>{colOrder.map((c) => <col key={c} data-col={c} style={{ width: widths[c] }} />)}</colgroup>
         <thead className="sticky top-0 z-20 bg-tableHead text-left text-xs font-semibold text-body">
           <tr role="row">
-            {COLS.map((c) => <th key={c} role="columnheader"
+            {shownCols.map((c) => <th key={c} role="columnheader" aria-label={HEADERS[c]} onContextMenu={(e) => openColMenu(e, c)}
               title={c === 'confirmed' ? '확정한 행은 같은 원문 자동 반영·단어장 일괄 적용·되돌리기에서 빠집니다(조사 고침은 확정 행도 고칩니다). 더블클릭하면 이 보기의 행을 한꺼번에 체크·해제합니다'
                 : isMark(c) ? '더블클릭하면 이 보기의 행을 한꺼번에 체크·해제합니다' : undefined}
               onDoubleClick={isMark(c) ? (e) => { const r = e.currentTarget.getBoundingClientRect(); setBulk({ x: r.left, y: r.bottom + 4, key: c }) } : undefined}
-              className={`${isMark(c) ? 'cursor-pointer select-none' : ''} ${WIDTHS[c]} h-[26px] border border-line bg-tableHead px-1.5 ${c === 'idx' || isMark(c) ? 'text-center' : ''} ${c === 'idx' ? 'sticky left-0 z-30' : c === 'id' ? 'sticky left-12 z-30' : ''}`}>{HEADERS[c]}</th>)}
+              className={`${isMark(c) ? 'cursor-pointer select-none' : ''} h-[26px] overflow-hidden text-ellipsis whitespace-nowrap border border-line bg-tableHead px-1.5 ${c === 'idx' || isMark(c) ? 'text-center' : ''} ${c === 'idx' ? 'sticky left-0 z-30' : c === 'id' ? 'sticky left-12 z-30' : 'relative'}`}>
+              {HEADERS[c]}{c !== 'idx' && widthHandle(c, HEADERS[c])}</th>)
+              .flatMap((th, k) => (placeOf && show('place') && shownCols[k] === (show('id') ? 'id' : 'idx') ? [th, <th key="place" role="columnheader" aria-label="파일 / 시트" onContextMenu={(e) => openColMenu(e, 'place')} className="relative h-[26px] overflow-hidden text-ellipsis whitespace-nowrap border border-line bg-tableHead px-1.5">파일 / 시트{widthHandle('place', '파일 / 시트')}</th>] : [th]))}
           </tr>
         </thead>
         <tbody>
-          {start > 0 && <tr aria-hidden style={{ height: start * ROW_HEIGHT }}><td colSpan={COLS.length} /></tr>}
+          {start > 0 && <tr aria-hidden style={{ height: offsets[Math.min(start, total)] }}><td colSpan={colOrder.length} /></tr>}
           {visible.map((i) => {
             const r = rows[i]
             const sel = cell?.row === i ? cell.col : null
             // 다른 사람이 고친 행 강조: 켜질 땐 바로(transition-none), 꺼질 땐 1초에 걸쳐 사라진다 — 전환은 도착 상태의 것이 쓰인다
             const hl = r && highlighted.has(r.id) ? 'bg-[#fff3a3] transition-none' : 'transition-colors duration-1000'
+            // 높인 행은 글을 여러 줄로 감고 위에 붙인다. 행 높이를 넘는 글은 잘라 표의 행 위치 계산이 맞게 한다.
+            const h = rowHeight
+            const tall = h > ROW_HEIGHT
+            const clip = (node: ReactNode) => (tall ? <div className="overflow-hidden" style={{ maxHeight: h - 2 }}>{node}</div> : node)
             const cellCls = (c: Col, extra = '') =>
-              `${WIDTHS[c]} h-[26px] overflow-hidden text-ellipsis whitespace-nowrap border border-line px-1.5 ${sel === c ? 'outline outline-2 -outline-offset-2 outline-[#107c41]' : ''} ${extra}`
+              `${tall ? 'whitespace-normal break-keep align-top [overflow-wrap:anywhere]' : 'h-[26px] text-ellipsis whitespace-nowrap'} overflow-hidden border border-line px-1.5 ${sel === c ? 'select-text outline outline-2 -outline-offset-2 outline-[#107c41]' : ''} ${extra}`
             if (!r) {
               return (
-                <tr key={i} role="row" style={{ height: ROW_HEIGHT }} className="text-muted">
+                <tr key={i} role="row" style={{ height: rowHeight }} className="text-muted">
                   <td role="gridcell" className={cellCls('idx', 'sticky left-0 bg-tableHead text-center')}>{i + 1}</td>
-                  {COLS.slice(1).map((c) => <td key={c} role="gridcell" className={cellCls(c, c === 'id' ? 'sticky left-12 z-10 bg-white' : '')} onClick={() => setCell({ row: i, col: c })}>…</td>)}
+                  {placeOf && show('place') && !show('id') && <td className="border border-line px-1.5">…</td>}
+                  {shownCols.slice(1).map((c) => <td key={c} role="gridcell" className={cellCls(c, c === 'id' ? 'sticky left-12 z-10 bg-white' : '')} onMouseDown={pick(i, c)}>…</td>)
+                    .flatMap((td, k) => (placeOf && show('place') && shownCols[k + 1] === 'id' ? [td, <td key="place" className="border border-line px-1.5">…</td>] : [td]))}
                 </tr>
               )
             }
@@ -389,38 +496,54 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
             const fixEditing = editing?.id === r.id && editing.col === 'fix' ? editing : null
             const noteEditing = editing?.id === r.id && editing.col === 'note' ? editing : null
             return (
-              <tr key={r.id} role="row" style={{ height: ROW_HEIGHT }} className={hl}>
-                <td role="gridcell" className={cellCls('idx', 'sticky left-0 z-10 bg-tableHead text-center text-muted')} onClick={() => setCell({ row: i, col: 'idx' })}
+              <tr key={r.id} role="row" data-row={i} style={{ height: h }} className={hl}>
+                <td role="gridcell" aria-label={String(r.rowNo)} className={cellCls('idx', 'sticky left-0 z-10 bg-tableHead text-center text-muted')} onMouseDown={pick(i, 'idx')}
                   style={editorTint(r.lastEditor?.color)} title={r.lastEditor ? `마지막 수정: ${r.lastEditor.name}${r.lastEditedAt ? ` · ${relativeTime(r.lastEditedAt)}` : ''}` : undefined}
-                  onContextMenu={(e) => onCellContextMenu(e, 'KO', '', { history: r })}>{r.rowNo}</td>
-                <td role="gridcell" className={cellCls('id', 'sticky left-12 z-10 bg-white font-mono text-xs text-body')} onClick={() => setCell({ row: i, col: 'id' })}>{r.keyText ?? r.indexLabel}</td>
-                <td role="gridcell" className={cellCls('src')} onClick={() => setCell({ row: i, col: 'src' })}
+                  onContextMenu={(e) => onCellContextMenu(e, 'KO', '', { history: r })}>
+                  {r.rowNo}
+                  <div role="separator" aria-orientation="horizontal" aria-label={`${r.rowNo}행 높이 조절`} title="끌어서 행 높이 조절 · 더블클릭하면 원래대로"
+                    onMouseDown={startRowResize} onClick={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => { e.stopPropagation(); layout.resetRowHeight() }}
+                    className="absolute inset-x-0 -bottom-[3px] z-10 h-[6px] cursor-row-resize" />
+                </td>
+                {show('id') && <td role="gridcell" className={cellCls('id', 'sticky left-12 z-10 bg-white font-mono text-xs text-body')} onMouseDown={pick(i, 'id')}>{clip(<span data-cell-text="id">{r.keyText ?? r.indexLabel}</span>)}</td>}
+                {placeOf && show('place') && (() => {
+                  // 바로 앞 행과 같은 파일·시트면 옅게 — 경계만 눈에 띄게 한다
+                  const place = placeOf(r)
+                  const prev = rows[i - 1]
+                  const same = !!prev && placeOf(prev) === place
+                  return <td className={`${tall ? 'whitespace-normal align-top [overflow-wrap:anywhere]' : 'h-[26px] text-ellipsis whitespace-nowrap'} overflow-hidden border border-line px-1.5 text-xs ${same ? 'text-muted/50' : 'text-body'}`} title={place}>{clip(place)}</td>
+                })()}
+                {show('src') && <td role="gridcell" className={cellCls('src')} onMouseDown={pick(i, 'src')}
                   onContextMenu={(e) => onCellContextMenu(e, 'SRC', r.src, { row: r, history: r })} title={r.src}>
                   {/* 원문만 줄여 …로 자르고 ×N 칩은 줄이지 않는다 — 칸 전체를 자르면 긴 원문 뒤의 칩까지 잘려 안 보인다. */}
-                  <div className="flex items-center">
-                    <span className="min-w-0 truncate">{r.src}</span>
+                  <div className={tall ? 'overflow-hidden' : 'flex items-center'} style={tall ? { maxHeight: h - 2 } : undefined}>
+                    <span data-cell-text="src" className={tall ? '' : 'min-w-0 truncate'}>{r.src}</span>
                     {r.dupCount > 1 && (
-                      <button type="button" title="이 원문이 이 게임에서 쓰이는 횟수"
-                        onClick={(e) => { e.stopPropagation(); onFilterDuplicates(r.src) }}
+                      <button type="button" title="이 원문이 이 게임에서 쓰이는 횟수" aria-haspopup="menu"
+                        // 칩을 눌러도 칸을 고르지 않는다 — 모아 보기를 풀 때 돌아갈 자리가 이 칸으로 바뀌면 안 된다.
+                        // 누르면 같은 행 / 포함된 행 중 고르는 작은 메뉴를 칩 아래에 띄운다(우클릭 메뉴와 같은 틀).
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); setMenu({ x: b.left, y: b.bottom + 4, kind: 'SRC', text: '', whole: true, dup: r.src }) }}
                         className="ml-1 shrink-0 rounded bg-purpleSoft px-1 text-[11px] tracking-[0.01em] text-purple">
                         ×{r.dupCount}
                       </button>
                     )}
                   </div>
-                </td>
-                <td role="gridcell" className={cellCls('en')} onClick={() => setCell({ row: i, col: 'en' })} title={r.en ?? ''}>{r.en}</td>
-                <td role="gridcell" className={cellCls('existingKo')} onClick={() => setCell({ row: i, col: 'existingKo' })} title={r.existingKo ?? ''}
-                  onContextMenu={(e) => onCellContextMenu(e, 'KO', r.existingKo ?? '', { shorten: r, history: r })}>{r.existingKo}</td>
+                </td>}
+                {show('en') && <td role="gridcell" className={cellCls('en')} onMouseDown={pick(i, 'en')} title={r.en ?? ''}>{clip(<span data-cell-text="en">{r.en}</span>)}</td>}
+                {show('existingKo') && <td role="gridcell" className={cellCls('existingKo')} onMouseDown={pick(i, 'existingKo')} title={r.existingKo ?? ''}
+                  onContextMenu={(e) => onCellContextMenu(e, 'KO', r.existingKo ?? '', { shorten: r, history: r })}>{clip(<span data-cell-text="existingKo">{r.existingKo}</span>)}</td>}
                 <td role="gridcell" aria-label={`${r.rowNo}행 Fix`}
-                  className={cellCls('fix', `relative ${r.changed ? 'bg-[#fff7d6]' : ''} ${fixEditing ? 'whitespace-normal' : ''} ${failed !== undefined ? 'border-2 border-red-500' : ''}`)}
-                  onClick={() => setCell({ row: i, col: 'fix' })} onDoubleClick={() => startEdit(i)}
+                  className={cellCls('fix', `relative ${finalReview ? (r.finalMark ? 'bg-[#e6f4d7]' : '') : (r.changed ? 'bg-[#fff7d6]' : '')} ${fixEditing ? 'whitespace-normal' : ''} ${failed !== undefined ? 'border-2 border-red-500' : ''}`)}
+                  onMouseDown={pick(i, 'fix')} onDoubleClick={() => startEdit(i)}
                   onContextMenu={(e) => { if (fixEditing) return; onCellContextMenu(e, 'KO', displayFix ?? '', { shorten: r, history: r }) }}>
                   {fixEditing && fixEditing.where === 'cell' ? (
                     <textarea aria-label={`${r.rowNo}행 Fix`} autoFocus value={fixEditing.text} rows={2}
                       onChange={(e) => setEditing({ id: r.id, col: 'fix', text: e.target.value, where: 'cell' })} onKeyDown={onEditorKey}
                       onBlur={onEditorBlur}
                       className="absolute inset-0 z-10 w-full resize-none border-2 border-[#107c41] bg-white px-1 py-0.5 text-[13px] leading-snug outline-none" />
-                  ) : isTranslating ? <span className="italic text-muted">GPT 번역 중…</span> : isBusy ? <span className="italic text-muted">저장 중…</span> : (
+                  ) : isTranslating ? <span className="italic text-muted">번역 중…</span> : isBusy ? <span className="italic text-muted">저장 중…</span> : clip(
                     <>
                       {r.termMiss.length > 0 && (
                         // 점 둘레로 마우스를 받는 자리를 넓힌다(-m로 글자 위치는 그대로).
@@ -430,48 +553,61 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
                           <span className="block h-2 w-2 rounded-full bg-primary" />
                         </span>
                       )}
-                      {fixEditing ? fixEditing.text : displayFix}
+                      <span data-cell-text="fix">{fixEditing ? fixEditing.text : displayFix}</span>
                       {(flagged || r.josaHints.length > 0) && (
                         <span className="absolute right-1 top-1 flex gap-0.5">
                           {r.josaHints.length > 0 && (
                             <button type="button" aria-label={`조사 제안 ${r.josaHints.length}개`}
+                              onMouseDown={(e) => e.stopPropagation()}
                               onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); setJosaTip({ x: b.left, y: b.bottom + 4, row: r }) }}
                               className="press rounded bg-purpleSoft px-1 text-[11px] tracking-[0.01em] text-purple">조사</button>
                           )}
                           {flagged && <span className="rounded bg-orangeSoft px-1 text-[11px] tracking-[0.01em] text-orange">길이</span>}
                         </span>
                       )}
-                    </>
+                    </>,
                   )}
                 </td>
-                {MARKS.map((key) => (
+                {MARKS.filter(show).map((key) => (
                   // 칸 어디를 눌러도 체크가 바뀐다. 확인 필요가 켜진 행은 체크 칸을 옅은 주황으로.
                   <td key={key} role="gridcell" aria-label={`${r.rowNo}행 ${HEADERS[key]}`}
                     className={cellCls(key, `cursor-pointer text-center ${r.needsCheck ? 'bg-orangeSoft' : ''}`)}
-                    onClick={() => { setCell({ row: i, col: key }); toggleMark(r, key) }}>
+                    onMouseDown={pick(i, key)} onClick={() => toggleMark(r, key)}>
                     <input type="checkbox" aria-label={`${r.rowNo}행 ${HEADERS[key]}`} checked={r[key]} onChange={() => { /* 칸의 onClick이 바꾼다 */ }}
                       tabIndex={-1} className="h-[18px] w-[18px] cursor-pointer align-middle accent-[#107c41]" />
                   </td>
                 ))}
-                <td role="gridcell" aria-label={`${r.rowNo}행 비고`} title={r.note ?? ''}
+                {show('note') && <td role="gridcell" aria-label={`${r.rowNo}행 비고`} title={r.note ?? ''}
                   className={cellCls('note', `relative ${noteEditing ? 'whitespace-normal' : ''}`)}
-                  onClick={() => setCell({ row: i, col: 'note' })} onDoubleClick={() => startEdit(i, undefined, 'cell', 'note')}>
+                  onMouseDown={pick(i, 'note')} onDoubleClick={() => startEdit(i, undefined, 'cell', 'note')}>
                   {noteEditing && noteEditing.where === 'cell' ? (
                     <textarea aria-label={`${r.rowNo}행 비고`} autoFocus value={noteEditing.text} rows={2}
                       onChange={(e) => setEditing({ id: r.id, col: 'note', text: e.target.value, where: 'cell' })} onKeyDown={onEditorKey}
                       onBlur={onEditorBlur}
                       className="absolute inset-0 z-10 w-full resize-none border-2 border-[#107c41] bg-white px-1 py-0.5 text-[13px] leading-snug outline-none" />
-                  ) : noteEditing ? noteEditing.text : r.note}
-                </td>
+                  ) : clip(<span data-cell-text="note">{noteEditing ? noteEditing.text : r.note}</span>)}
+                </td>}
               </tr>
             )
           })}
-          {end < total && <tr aria-hidden style={{ height: (total - end) * ROW_HEIGHT }}><td colSpan={COLS.length} /></tr>}
+          {end < total && <tr aria-hidden style={{ height: offsets[total] - offsets[end] }}><td colSpan={colOrder.length} /></tr>}
         </tbody>
       </table>
       {menu && (
-        <Anchored ref={menuRef} role="menu" x={menu.x} y={menu.y} deps={[menu.row, menu.shorten, menu.history]}
+        <Anchored ref={menuRef} role="menu" x={menu.x} y={menu.y} deps={[menu.row, menu.shorten, menu.history, menu.hideCol]}
           className="glass pop-in z-50 min-w-[180px] origin-top-left rounded-lg border border-line/70 p-1 text-[13px] shadow-[0_12px_32px_-8px_rgba(16,24,40,0.22)]">
+          {menu.dup !== undefined && (
+            <>
+              <button type="button" role="menuitem" className="block w-full rounded-md px-2.5 py-1 text-left hover:bg-primarySoft active:bg-[#d5e1f6]"
+                onClick={() => { onFilterDuplicates(menu.dup!, 'exact'); setMenu(null) }}>
+                같은 행 보기
+              </button>
+              <button type="button" role="menuitem" className="block w-full rounded-md px-2.5 py-1 text-left hover:bg-primarySoft active:bg-[#d5e1f6]"
+                onClick={() => { onFilterDuplicates(menu.dup!, 'contains'); setMenu(null) }}>
+                포함된 전체 행 보기
+              </button>
+            </>
+          )}
           {menu.text && (
             <button type="button" role="menuitem" className="block w-full rounded-md px-2.5 py-1 text-left hover:bg-primarySoft active:bg-[#d5e1f6]"
               onClick={() => { onAddToGlossary(menu.kind, menu.text, menu.whole); setMenu(null) }}>
@@ -489,8 +625,8 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
           {menu.row && (
             <>
               <button type="button" role="menuitem" className="block w-full rounded-md px-2.5 py-1 text-left hover:bg-primarySoft active:bg-[#d5e1f6]"
-                onClick={openAsk}>
-                GPT 번역
+                onClick={translateRow}>
+                DeepL 번역
               </button>
             </>
           )}
@@ -498,6 +634,12 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
             <button type="button" role="menuitem" className="block w-full rounded-md px-2.5 py-1 text-left hover:bg-primarySoft active:bg-[#d5e1f6]"
               onClick={openHistory}>
               변경 내역 보기
+            </button>
+          )}
+          {menu.hideCol && (
+            <button type="button" role="menuitem" className="block w-full rounded-md px-2.5 py-1 text-left hover:bg-primarySoft active:bg-[#d5e1f6]"
+              onClick={hideCol}>
+              열 숨기기
             </button>
           )}
         </Anchored>
@@ -524,26 +666,6 @@ export function WorkspaceGrid({ rows, ratio, busy, highlighted, failedText, onSa
               return <li key={it} className="whitespace-nowrap">{src} <span className="text-muted">→</span> <span className="font-medium text-primary">{ko ?? ''}</span></li>
             })}
           </ul>
-        </Anchored>
-      )}
-      {ask && (
-        // 이 창의 키·붙여넣기가 그리드(onKeyDown·onPaste)로 올라가 Fix 편집을 열지 않게 여기서 멈춘다.
-        <Anchored role="dialog" aria-label="GPT 번역" x={ask.x} y={ask.y}
-          onKeyDown={(e) => e.stopPropagation()} onPaste={(e) => e.stopPropagation()}
-          className="glass pop-in z-50 w-72 origin-top-left rounded-xl border border-line/70 p-2.5 text-[13px] shadow-[0_12px_32px_-8px_rgba(16,24,40,0.22)]">
-          <label className="mb-1 block text-xs text-body" htmlFor="row-translate-instructions">추가 지시 (비워도 됨)</label>
-          <textarea id="row-translate-instructions" aria-label="추가 지시" autoFocus rows={3} value={ask.text}
-            onChange={(e) => setAsk({ ...ask, text: e.target.value })} onKeyDown={onAskKey}
-            placeholder="예: 10자 이내로, 존댓말로"
-            className="w-full resize-none rounded-lg border border-line bg-white px-2 py-1.5 text-[13px] outline-none transition-shadow focus:border-primary focus:ring-4 focus:ring-primary/10" />
-          <div className="mt-1.5 flex items-center justify-between">
-            <span className="text-[11px] text-muted">Enter 번역 · Shift+Enter 줄바꿈</span>
-            <div className="flex gap-1">
-              <button type="button" onClick={closeAsk} className="press rounded-md px-2.5 py-1 text-body hover:bg-black/5">취소</button>
-              {/* 셀 편집의 초록은 엑셀 친숙함용이고, 이 창은 셀이 아니므로 앱의 주요 버튼 색(primary)을 쓴다 */}
-              <button type="button" onClick={submitAsk} className="press rounded-md bg-primary px-2.5 py-1 font-medium text-white hover:bg-[#1a4084]">번역</button>
-            </div>
-          </div>
         </Anchored>
       )}
       {bulk && (

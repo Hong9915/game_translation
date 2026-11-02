@@ -10,7 +10,8 @@ type OldKoMode = 'CANDIDATE' | 'CUSTOM' | 'NONE'
 
 export interface GlossaryPanelProps {
   gameId: number
-  projectId: number
+  /** 목록 캐시 키(파일 화면은 프로젝트 id, 게임 화면은 'g{게임 id}'). 일괄 적용 뒤 그리드를 새로 읽게 한다. */
+  projectId: number | string
   onClose: () => void
   initial?: { kind: GlossaryKind; find: string; matchMode: GlossaryMatchMode; seq: number }
 }

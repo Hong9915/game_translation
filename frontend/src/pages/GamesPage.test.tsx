@@ -6,8 +6,8 @@ import { renderWithProviders } from '../test/render'
 import { GamesPage } from './GamesPage'
 
 const games = [
-  { id: 3, name: '드래곤 레이드', projects: 2, terms: 120, memory: 2318, lastUploadedAt: '2026-09-15T09:00:00Z', createdAt: '2026-09-01T00:00:00Z' },
-  { id: 4, name: '스타 아레나', projects: 0, terms: 0, memory: 0, lastUploadedAt: null, createdAt: '2026-09-18T00:00:00Z' },
+  { id: 3, name: '드래곤 레이드', projects: 2, memory: 2318, lastUploadedAt: '2026-09-15T09:00:00Z', createdAt: '2026-09-01T00:00:00Z' },
+  { id: 4, name: '스타 아레나', projects: 0, memory: 0, lastUploadedAt: null, createdAt: '2026-09-18T00:00:00Z' },
 ]
 
 describe('GamesPage', () => {
@@ -26,7 +26,7 @@ describe('GamesPage', () => {
   it('creates a game and goes straight into it', async () => {
     const { calls } = mockFetch([
       { path: '/games', body: [] },
-      { method: 'POST', path: '/games', body: { id: 9, name: '새 게임', projects: 0, terms: 0, memory: 0, lastUploadedAt: null, createdAt: '2026-09-21T00:00:00Z' } },
+      { method: 'POST', path: '/games', body: { id: 9, name: '새 게임', projects: 0, memory: 0, lastUploadedAt: null, createdAt: '2026-09-21T00:00:00Z' } },
     ])
     renderWithProviders(<GamesPage />)
     expect(await screen.findByText('아직 게임이 없습니다. 첫 게임을 만들어 파일을 올리세요.')).toBeInTheDocument()

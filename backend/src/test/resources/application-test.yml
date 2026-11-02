@@ -8,3 +8,5 @@ app:
   llm-concurrency: 1   # FakeLlmClient는 스레드 안전하지 않다
   josa:
     scheduled: false   # 테스트는 JosaCheckJob.runOnce()를 직접 부른다
+  translate:
+    engine: gpt   # 기존 GPT 번역 테스트를 그대로 둔다. DeepL 테스트는 @TestPropertySource로 deepl

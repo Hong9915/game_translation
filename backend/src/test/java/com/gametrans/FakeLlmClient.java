@@ -10,8 +10,6 @@ import java.util.Set;
 
 /** 테스트용 결정적 LLM. 필드를 채워 응답을 제어한다. */
 public class FakeLlmClient implements LlmClient {
-    public List<TermExtraction> termsToReturn = new ArrayList<>();
-    public Map<String, List<Candidate>> candidatesToReturn = new HashMap<>();
     public Map<String, String> translations = new HashMap<>();
     /** 이 인덱스는 첫 호출에서만 응답에서 빠진다(누락 재시도 검증용). */
     public Set<String> dropOnce = new HashSet<>();
@@ -19,36 +17,6 @@ public class FakeLlmClient implements LlmClient {
     public Set<String> breakPlaceholdersOnce = new HashSet<>();
     public List<TranslateBatchRequest> translateCalls = new ArrayList<>();
     public boolean pingResult = true;
-    /** null이 아니면 extractTerms 호출 시 이 예외를 던진다(추출 실패 시나리오 검증용). */
-    public RuntimeException extractFailure;
-    /** true면 실제 gpt-5-mini가 가끔 그러듯 src를 프롬프트 표기 그대로 "원문 (유형)"으로 돌려준다. */
-    public boolean echoTypeInSrc;
-    /** null이 아니면 첫 후보의 src를 이 값으로 바꿔 돌려준다(원문 불일치 시나리오). */
-    public String unmatchedSrc;
-
-    /** extractTerms가 마지막으로 받은 반복 구절 후보(구절 → 등장 문장 수). */
-    public Map<String, Integer> lastFrequent = new HashMap<>();
-
-    @Override public List<TermExtraction> extractTerms(List<String> sourceTexts, Map<String, Integer> frequentPhrases) {
-        lastFrequent = new HashMap<>(frequentPhrases);
-        if (extractFailure != null) throw extractFailure;
-        return new ArrayList<>(termsToReturn);
-    }
-
-    /** 후보 추천 호출마다 넘어온 고정 번역(짧은 용어). */
-    public final List<java.util.Map<String, String>> suggestFixedParts = new java.util.concurrent.CopyOnWriteArrayList<>();
-
-    @Override public List<CandidateSuggestion> suggestCandidates(List<TermInput> terms, java.util.Map<String, String> fixedParts) {
-        suggestFixedParts.add(new java.util.LinkedHashMap<>(fixedParts));
-        List<CandidateSuggestion> out = new ArrayList<>();
-        for (TermInput t : terms) {
-            String src = echoTypeInSrc ? t.src() + " (" + t.type() + ")" : t.src();
-            if (unmatchedSrc != null && out.isEmpty()) src = unmatchedSrc;
-            out.add(new CandidateSuggestion(src, candidatesToReturn.getOrDefault(t.src(), List.of())));
-        }
-        return out;
-    }
-
     @Override public List<TranslationResult> translateBatch(TranslateBatchRequest request) {
         translateCalls.add(request);
         List<TranslationResult> out = new ArrayList<>();
@@ -111,6 +79,17 @@ public class FakeLlmClient implements LlmClient {
         return out;
     }
 
+    /** 용어 바꾸기: termSwap에 든 지금 번역 → 고친 글. 없는 번역은 그대로 돌려준다(GPT가 못 고친 것). 호출은 termSwapCalls에 쌓인다. */
+    public Map<String, String> termSwap = new HashMap<>();
+    public List<List<FixTermsRow>> termSwapCalls = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    @Override public List<TranslationResult> termSwapBatch(List<FixTermsRow> rows) {
+        termSwapCalls.add(rows);
+        List<TranslationResult> out = new ArrayList<>();
+        for (FixTermsRow r : rows) out.add(new TranslationResult(r.index(), termSwap.getOrDefault(r.ko(), r.ko())));
+        return out;
+    }
+
     /** shortenOptions가 돌려줄 후보(그대로). 호출은 shortenCalls에 쌓인다. */
     public List<String> shortenOptions = List.of();
     public List<ShortenOptionsRequest> shortenCalls = new ArrayList<>();
@@ -131,6 +110,17 @@ public class FakeLlmClient implements LlmClient {
         classifyCalls.add(phrases);
         List<PhraseCategory> out = new ArrayList<>();
         for (PhraseInput p : phrases) if (categories.containsKey(p.src())) out.add(new PhraseCategory(p.src(), categories.get(p.src())));
+        return out;
+    }
+
+    /** 단어장 요청 초안 응답(원문 → 한국어). 없는 원문은 응답에서 빠진다. 호출은 draftCalls에 쌓인다(동시에 불릴 수 있다). */
+    public Map<String, String> termDrafts = new java.util.concurrent.ConcurrentHashMap<>();
+    public List<TermDraftRequest> draftCalls = java.util.Collections.synchronizedList(new ArrayList<>());
+
+    @Override public List<TermDraft> draftTerms(TermDraftRequest req) {
+        draftCalls.add(req);
+        List<TermDraft> out = new ArrayList<>();
+        for (String t : req.terms()) if (termDrafts.containsKey(t)) out.add(new TermDraft(t, termDrafts.get(t), "가짜"));
         return out;
     }
 

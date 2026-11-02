@@ -118,88 +118,6 @@ class MultiSheetNormalizeTest extends IntegrationTest {
         assertThat(segments.findById(newSkillId).orElseThrow().getAssigneeId()).isEqualTo(rid);
     }
 
-    /**
-     * 용어는 프로젝트 전체에 걸쳐 있다. 시트가 여럿일 때 한 시트를 다시 정규화해도 지우면 안 되고,
-     * 새로 만든 그 시트의 행에도 확정 용어가 다시 붙어야 한다 — 안 붙으면 그 행이 다시 GPT로 가고
-     * 용어 행 수도 어긋난다.
-     */
-    @Test
-    void reNormalizingOneOfTwoSheetsKeepsTheProjectTermsAndRelinksItsRows() throws Exception {
-        long pid = TestProjects.uploadTwoSheets(mvc, TestProjects.freshGame());
-        normalize(pid, "Items");
-        normalize(pid, "Skills");
-        long termId = confirmTerm(pid, "霜语者", "서리속삭임");
-        assertLinked(pid, "Items", termId, "서리속삭임");
-        assertLinked(pid, "Skills", termId, "서리속삭임");
-
-        normalize(pid, "Skills");
-
-        mvc.perform(get("/api/projects/{id}/terms", pid))
-                .andExpect(jsonPath("$.terms.length()").value(1))
-                .andExpect(jsonPath("$.stats.confirmed").value(1))
-                .andExpect(jsonPath("$.stats.termRows").value(2));
-        assertLinked(pid, "Skills", termId, "서리속삭임");   // 새로 만든 행에 다시 붙었다
-        assertLinked(pid, "Items", termId, "서리속삭임");
-    }
-
-    /** 용어를 확정한 뒤에 시트를 새로 추가해도 그 시트의 행에 확정 용어가 붙는다. */
-    @Test
-    void aSheetAddedAfterTermsWereConfirmedGetsItsRowsLinked() throws Exception {
-        long pid = TestProjects.uploadTwoSheets(mvc, TestProjects.freshGame());
-        normalize(pid, "Items");
-        long termId = confirmTerm(pid, "霜语者", "서리속삭임");
-
-        normalize(pid, "Skills");
-
-        assertLinked(pid, "Skills", termId, "서리속삭임");
-        mvc.perform(get("/api/projects/{id}/terms", pid))
-                .andExpect(jsonPath("$.terms.length()").value(1))
-                .andExpect(jsonPath("$.stats.confirmed").value(1));
-    }
-
-    /**
-     * 기존 한국어가 이미 있는 칸(EXISTING 유지)이라도 그 원문이 확정 용어면, 정규화 직후 현재 판은
-     * 확정 용어 값(GLOSSARY)이다 — 용어를 확정할 때와 같은 동작이다. 파일에 있던 문장은 0판(EXISTING)으로
-     * 이력에 남는다. 이 동작을 여기서 못 박아 둔다.
-     */
-    @Test
-    void aKeptExistingKoRowStillTakesTheConfirmedTermValue() throws Exception {
-        long pid = TestProjects.uploadTwoSheets(mvc, TestProjects.freshGame());
-        normalize(pid, "Items");
-        long termId = confirmTerm(pid, "霜语者", "서리속삭임");
-
-        // Quest!2의 KR_Name에는 이미 "서리"가 적혀 있다(그 원문이 방금 확정한 용어다)
-        mvc.perform(put("/api/projects/{id}/normalize", pid).contentType(MediaType.APPLICATION_JSON)
-                        .content(TestProjects.QUEST_NORMALIZE))
-                .andExpect(status().isOk());
-
-        Segment s = sheetSegments(pid, "Quest").stream().filter(x -> "霜语者".equals(x.getSrcText())).findFirst().orElseThrow();
-        assertThat(s.getExistingKoText()).isEqualTo("서리");
-        assertThat(s.isTerm()).isTrue();
-        assertThat(s.getTermId()).isEqualTo(termId);
-        assertThat(revisions.current(s.getId())).get()
-                .extracting(TranslationRevision::getAuthor, TranslationRevision::getText)
-                .containsExactly(TranslationRevision.Author.GLOSSARY, "서리속삭임");
-        // 파일에 있던 문장은 사라지지 않고 0판으로 남는다
-        assertThat(revisions.bySegmentIds(List.of(s.getId())).get(s.getId()))
-                .extracting(TranslationRevision::getAuthor, TranslationRevision::getText)
-                .containsExactly(org.assertj.core.groups.Tuple.tuple(TranslationRevision.Author.EXISTING, "서리"),
-                        org.assertj.core.groups.Tuple.tuple(TranslationRevision.Author.GLOSSARY, "서리속삭임"));
-    }
-
-    /** 시트가 하나뿐인 프로젝트에서는 예전 그대로 — 다시 정규화하면 용어도 처음부터 다시 뽑는다. */
-    @Test
-    void reNormalizingTheOnlySheetStillClearsTheTerms() throws Exception {
-        long pid = TestProjects.uploadTwoSheets(mvc, TestProjects.freshGame());
-        normalize(pid, "Items");
-        confirmTerm(pid, "霜语者", "서리속삭임");
-
-        normalize(pid, "Items");
-
-        mvc.perform(get("/api/projects/{id}/terms", pid)).andExpect(jsonPath("$.terms.length()").value(0));
-        assertThat(sheetSegments(pid, "Items")).allSatisfy(s -> assertThat(s.isTerm()).isFalse());
-    }
-
     /** 시트 빼기: 설정과 그 시트 세그먼트만 사라진다. 시트 이름은 한글·공백·`%`·`#`이 있어도 오간다. */
     @Test
     void deleteRemovesOnlyThatSheetAndUnknownSheetIs404() throws Exception {
@@ -231,7 +149,6 @@ class MultiSheetNormalizeTest extends IntegrationTest {
         long pid = TestProjects.uploadTwoSheets(mvc, TestProjects.freshGame());
         long fresh = TestProjects.uploadTwoSheets(mvc, TestProjects.freshGame());   // 정규화한 적 없는 프로젝트
         normalize(pid, "Items");
-        confirmTerm(pid, "霜语者", "서리속삭임");
 
         removeSheet(pid, "Items").andExpect(status().isNoContent());
 
@@ -241,11 +158,6 @@ class MultiSheetNormalizeTest extends IntegrationTest {
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         assertThat(emptied).isEqualTo(never);
         assertThat(segments.findByProjectIdOrderBySheetNameAscRowNoAscPairIndexAsc(pid)).isEmpty();
-        // 용어와 게임 메모리는 프로젝트·게임 것이라 시트를 뺐다고 사라지지 않는다
-        mvc.perform(get("/api/projects/{id}/terms", pid))
-                .andExpect(jsonPath("$.terms.length()").value(1))
-                .andExpect(jsonPath("$.stats.confirmed").value(1));
-        assertThat(memory.allTerms(pid)).containsEntry("霜语者", "서리속삭임");
     }
 
     private org.springframework.test.web.servlet.ResultActions normalize(long pid, String sheet) throws Exception {
@@ -269,29 +181,6 @@ class MultiSheetNormalizeTest extends IntegrationTest {
 
     private org.springframework.test.web.servlet.ResultActions removeSheet(long pid, String sheet) throws Exception {
         return mvc.perform(delete("/api/projects/{id}/normalize", pid).param("sheet", sheet));
-    }
-
-    /** 원문 하나를 용어로 뽑아 확정한다(TermControllerTest의 추출 → 확정 흐름). 용어 id를 돌려준다. */
-    private long confirmTerm(long pid, String src, String ko) throws Exception {
-        ((FakeLlmClient) llm).termsToReturn = List.of(new LlmClient.TermExtraction(src, "CHARACTER"));
-        mvc.perform(post("/api/projects/{id}/terms/extract", pid)).andExpect(status().isOk());
-        String list = mvc.perform(get("/api/projects/{id}/terms", pid)).andExpect(jsonPath("$.terms.length()").value(1))
-                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        long termId = ((Number) JsonPath.parse(list).read("$.terms[0].id")).longValue();
-        mvc.perform(patch("/api/terms/{id}", termId).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"confirmedKo\":\"" + ko + "\",\"confirmed\":true}"))
-                .andExpect(status().isOk());
-        return termId;
-    }
-
-    /** 그 시트의 霜语者 행이 용어 행으로 붙어 있고 확정 번역이 GLOSSARY 리비전으로 들어가 있다. */
-    private void assertLinked(long pid, String sheet, long termId, String ko) {
-        Segment s = sheetSegments(pid, sheet).stream().filter(x -> "霜语者".equals(x.getSrcText())).findFirst().orElseThrow();
-        assertThat(s.isTerm()).isTrue();
-        assertThat(s.getTermId()).isEqualTo(termId);
-        assertThat(revisions.current(s.getId())).get()
-                .extracting(TranslationRevision::getAuthor, TranslationRevision::getText)
-                .containsExactly(TranslationRevision.Author.GLOSSARY, ko);
     }
 
     private List<Segment> sheetSegments(long pid, String sheet) {

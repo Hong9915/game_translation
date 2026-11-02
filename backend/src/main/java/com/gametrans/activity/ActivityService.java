@@ -72,7 +72,17 @@ public class ActivityService {
     public FeedResponse feed(Long projectId, Long before, int size) {
         Project p = projects.findById(projectId).orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
         int n = Math.max(1, Math.min(FEED_MAX, size));
-        List<Activity> items = repo.feed(projectId, p.getGame().getId(), before == null ? Long.MAX_VALUE : before, PageRequest.of(0, n));
+        return feed(repo.feed(projectId, p.getGame().getId(), before == null ? Long.MAX_VALUE : before, PageRequest.of(0, n)), n);
+    }
+
+    /** 게임 전체 리뷰 화면: 범위에 든 파일들 + 게임 단위 항목을 시간순(최신부터)으로 합친다. */
+    @Transactional(readOnly = true)
+    public FeedResponse feedForGame(Long gameId, List<Long> projectIds, Long before, int size) {
+        int n = Math.max(1, Math.min(FEED_MAX, size));
+        return feed(repo.feedOfProjects(projectIds, gameId, before == null ? Long.MAX_VALUE : before, PageRequest.of(0, n)), n);
+    }
+
+    private FeedResponse feed(List<Activity> items, int n) {
         List<Long> ids = items.stream().map(Activity::getId).toList();
         Map<Long, Long> counts = new HashMap<>();
         Map<Long, RevisionRowView> primaries = new HashMap<>();
@@ -86,7 +96,7 @@ public class ActivityService {
             String sheet = primary != null ? primary.sheet()
                     : (a.getKind() == Kind.FIX_TERMS || a.getKind() == Kind.SHORTEN) ? (String) a.getDetail().get("sheet") : null;
             return new FeedItem(a.getId(), a.getKind().name(), ReviewerService.ref(a.getReviewerId() == null ? null : byId.get(a.getReviewerId())),
-                    a.getCreatedAt(), counts.getOrDefault(a.getId(), 0L), sheet, primary, a.getDetail());
+                    a.getCreatedAt(), counts.getOrDefault(a.getId(), 0L), sheet, primary, a.getDetail(), a.getProjectId());
         }).toList();
         // 꽉 찬 쪽이면 더 있을 수 있다 — 마지막 id를 커서로 준다. 딱 맞아떨어지면 다음 쪽이 비어 오고 그때 끝난다.
         Long next = items.size() == n ? items.get(items.size() - 1).getId() : null;

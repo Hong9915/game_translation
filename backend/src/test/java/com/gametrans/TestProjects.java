@@ -22,6 +22,9 @@ public final class TestProjects {
         return upload(mvc, "Skill_DB1.xlsx", TestWorkbooks.withExistingKo(), gameName);
     }
 
+    /** untranslatedNaRows() — EXISTING_KO_NORMALIZE로 정규화한다. */
+    public static long uploadUntranslatedNa(MockMvc mvc) throws Exception { return upload(mvc, "CardRepository.xlsx", TestWorkbooks.untranslatedNaRows(), null); }
+
     /** withExistingKo()와 같은 열 배치인데 한 시트 안에 원문이 겹치는 행(2행·6행)이 있다. */
     public static long uploadExistingKoSameSourceTwice(MockMvc mvc, String gameName) throws Exception {
         return upload(mvc, "Skill_DB2.xlsx", TestWorkbooks.withExistingKoSameSourceTwice(), gameName);
@@ -42,11 +45,32 @@ public final class TestProjects {
         return upload(mvc, "Variants.xlsx", TestWorkbooks.variantRows(), gameName);
     }
 
+    /** wholeTermRows() — 1글자 원문 WHOLE 시험용. EXISTING_KO_NORMALIZE로 정규화한다. */
+    public static long uploadWholeTerm(MockMvc mvc, String gameName) throws Exception {
+        return upload(mvc, "Coins.xlsx", TestWorkbooks.wholeTermRows(), gameName);
+    }
+
     public static long upload(MockMvc mvc, String gameName) throws Exception { return upload(mvc, "ItemText_v3.xlsx", TestWorkbooks.sample(), gameName); }
 
     public static long uploadVariant(MockMvc mvc, String gameName) throws Exception { return upload(mvc, "ItemText_v4.xlsx", TestWorkbooks.variant(), gameName); }
 
     public static long uploadNumeric(MockMvc mvc, String gameName) throws Exception { return upload(mvc, "HeroText.xlsx", TestWorkbooks.numericVariants(), gameName); }
+
+    public static long uploadExistingKoAsFinal(MockMvc mvc, String gameName) throws Exception { return upload(mvc, "Skill_final.xlsx", TestWorkbooks.existingKoAsFinal(), gameName); }
+
+    /** existingKoAsFinal()을 최종 리뷰 버전으로(기존 D, 수정 E). */
+    public static final String FINAL_SKILL_NORMALIZE = """
+        {"sheetName":"Skill","headerRow":1,"keyCol":"A",
+         "pairs":[{"srcCol":"B","enCol":"C","koColMode":"EXISTING_TO_NEW","koCol":"D","fixCol":"E"}]}
+        """;
+
+    /** finalReview() 워크북을 최종 리뷰 버전으로(원문 B, 기존 C, 수정 D). */
+    public static final String FINAL_REVIEW_NORMALIZE = """
+        {"sheetName":"Sheet1","headerRow":1,"keyCol":null,
+         "pairs":[{"srcCol":"B","enCol":null,"koColMode":"EXISTING_TO_NEW","koCol":"C","koHeader":null,"fixCol":"D"}]}
+        """;
+
+    public static long uploadFinalReview(MockMvc mvc) throws Exception { return upload(mvc, "UI文本_261012(KR).xlsx", TestWorkbooks.finalReview(), null); }
 
     public static long uploadProofread(MockMvc mvc) throws Exception { return upload(mvc, "Code.xlsx", TestWorkbooks.proofread(), null); }
 

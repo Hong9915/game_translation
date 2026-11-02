@@ -1,7 +1,6 @@
 package com.gametrans.llm;
 
 import com.gametrans.llm.LlmClient.ShortenRow;
-import com.gametrans.llm.LlmClient.TermInput;
 import com.gametrans.llm.LlmClient.TranslateBatchRequest;
 import com.gametrans.llm.LlmClient.TranslateRow;
 import com.gametrans.text.GlossaryCheck;
@@ -10,22 +9,6 @@ import java.util.Map;
 
 public final class Prompts {
     private Prompts() {}
-
-    static final String EXTRACT_SYSTEM = """
-        You are a game localization terminologist. From Simplified Chinese game strings, extract terms that must be
-        translated consistently across the whole game:
-        - Proper nouns: item names (ITEM), character names (CHARACTER), skill names (SKILL), place names (PLACE).
-        - Recurring game vocabulary (COMMON): system and economy words a player sees again and again, such as 商城, 礼包,
-          充值, 钻石, 金币, 体力, 签到, 抽卡, 副本, 排行榜, 公会, and named currencies or resources. Include a COMMON term only
-          when it is a noun phrase of 2-6 characters that appears verbatim in the input; skip verbs, function words,
-          numbers, placeholders like {0} and markup tags.
-        The user message may list frequent phrases of the whole file with the number of strings each appears in. They were
-        found statistically and are hints, not answers: include a listed phrase only if it is a term by the rules above,
-        and still extract proper nouns that are not listed.
-        Return ONLY JSON: {"items":[{"src":"<exact chinese term>","type":"ITEM|CHARACTER|SKILL|PLACE|COMMON|OTHER"}]}.
-        Never return numbered variants of one term (11星英雄, 12星英雄, 110级史诗装备); return the base term (星英雄, 史诗装备) once.
-        A term must appear verbatim in the input. Do not include sentences, only terms.
-        """;
 
     static final String CLASSIFY_SYSTEM = """
         You classify Simplified Chinese phrases from one mobile game so a Korean reviewer can filter them.
@@ -47,6 +30,41 @@ public final class Prompts {
         Return ONLY JSON: {"items":[{"src":"<phrase exactly as given>","category":"<one category>"}]} with one item per input phrase.
         """;
 
+    static final String DRAFT_TERMS_SYSTEM = """
+        You draft Korean glossary entries for terms from one Chinese mobile game, requested by the game's developer.
+        Each term will become the fixed Korean name used everywhere in the game, so give one natural Korean rendering per term.
+        Follow the category rule at the top of the message. Keep naming consistent with the terms already decided in this game, and follow the game style notes.
+        Do not add explanations, quotes or alternatives to the Korean.
+        For each term give a reason: one short sentence in Korean saying why you chose that rendering.
+        Return ONLY JSON: {"items":[{"src":"<term exactly as given>","ko":"<korean>","reason":"<한국어 한 문장>"}]} with one item per input term.
+        """;
+
+    /** 양식 분류별 지시. 모르는 분류는 OTHER처럼 둔다. */
+    static String draftTermsRule(String category) {
+        return switch (category == null ? "" : category) {
+            case "CHARACTER" -> "Decide first whether each term is a personal name or a title/epithet. Transliterate names into natural Korean (Chinese reading, or the setting's spelling); translate titles by meaning (森之召唤师 → 숲의 소환사).";
+            case "MONSTER", "ITEM", "SKILL", "PLACE" -> "Translate by meaning, short and natural, the way Korean mobile games name them.";
+            default -> "Prefer the established Korean game term (钻石 → 다이아, 公会 → 길드, 体力 → 스태미나).";
+        };
+    }
+
+    static String draftTermsUser(LlmClient.TermDraftRequest req) {
+        StringBuilder sb = new StringBuilder(draftTermsRule(req.category())).append("\n\n");
+        if (req.known() != null && !req.known().isEmpty()) {
+            sb.append("Already decided in this game (keep naming consistent with these):\n");
+            for (LlmClient.Reference r : req.known()) sb.append("- ").append(r.cn()).append(" → ").append(r.ko()).append('\n');
+            sb.append('\n');
+        }
+        if (req.instructions() != null && !req.instructions().isEmpty()) {
+            sb.append("Game style notes:\n");
+            for (String line : req.instructions()) sb.append("- ").append(line).append('\n');
+            sb.append('\n');
+        }
+        sb.append("Terms:\n");
+        for (String t : req.terms()) sb.append("- ").append(t).append('\n');
+        return sb.toString();
+    }
+
     public static final String COMMAND_SYSTEM = """
         You help a Korean reviewer of a Chinese→Korean mobile game localization. The reviewer types a command in Korean about
         the Korean translations of ONE sheet. You have tools that look at the sheet and try edits; the server applies nothing
@@ -63,6 +81,8 @@ public final class Prompts {
           that changes the last syllable of a word that particles attach to. After another op it fixes only rows that op changed; alone it fixes the whole sheet.
         - {"kind":"UNIFY_SAME_SOURCE"}: rows with the same source text get one translation (confirmed one, else the most used).
           Only as the first op.
+        - {"kind":"TERM","src":"<Chinese term>","ko":"<Korean>"}: every row whose source contains src gets its Korean rewritten
+          by GPT so that term is rendered as ko (whatever word, English or omission it uses now). Alone only — no other ops.
         Rules for REPLACE:
         - Change only what the command asks.
         - <...> tags and {...} placeholders may be inside a match only if the replacement keeps them unchanged and in order —
@@ -73,9 +93,11 @@ public final class Prompts {
           For spacing rules use [ \\t] instead of \\s. Leave list markers at the start of a line alone ("- 항목").
         - Read the direction carefully: "A을 B로 바꿔줘" and "A 이런거를 B 이걸로" mean find A and write B.
         - 이거, 이것, 이런 거, 저거, 그거 point back to the term the reviewer just named — never search for them as text.
-          "子弹 이거 번역을 다 탄환으로 바꿔줘" means: rows whose source contains 子弹 → filter {"in":"src","contains":"子弹"}.
-        - Chinese text in the command is a source term. Filter rows with "in":"src", call find_rows with "in":"src" to see how
-          that term is translated now, then replace each of those Korean renderings with the requested one.
+          "子弹 이거 번역을 다 탄환으로 바꿔줘" means the source term 子弹, not the word 이거.
+        - Chinese text in the command is a source term. When the command wants that term translated as some Korean
+          ("关卡 이거를 스테이지로 바꿔줘", "子弹 이거 번역을 다 탄환으로"), use the single op {"kind":"TERM","src":"关卡","ko":"스테이지"}:
+          its current renderings differ row by row, so REPLACE rules miss rows. Check it with try_ops, then finish.
+          Use REPLACE with "in":"src" only when the command says exactly which Korean word to swap.
         - When one punctuation mark replaces another, make the spacing around the new mark look natural in Korean.
         - "대시" or "-" means any of - – — unless the command names just one; keep each dash as it is;
           a dash glued to a following number is a minus sign — leave it alone.
@@ -107,49 +129,6 @@ public final class Prompts {
         for (LlmClient.PhraseInput p : phrases)
             sb.append("- ").append(p.src()).append(" | ").append(p.ko() == null ? "" : p.ko()).append(" | ")
               .append(p.example() == null ? "" : p.example()).append(" | ").append(p.hint() == null ? "" : p.hint()).append('\n');
-        return sb.toString();
-    }
-
-    static String extractUser(List<String> texts, Map<String, Integer> frequentPhrases) {
-        StringBuilder sb = new StringBuilder();
-        if (frequentPhrases != null && !frequentPhrases.isEmpty()) {
-            sb.append("Frequent phrases in this file (phrase, number of strings containing it):\n");
-            for (Map.Entry<String, Integer> e : frequentPhrases.entrySet()) sb.append("- ").append(e.getKey()).append(" (").append(e.getValue()).append(")\n");
-            sb.append('\n');
-        }
-        sb.append("Strings:\n");
-        for (String t : texts) sb.append("- ").append(t).append('\n');
-        return sb.toString();
-    }
-
-    static final String SUGGEST_SYSTEM = """
-        You are a Korean game localizer. For each Simplified Chinese term (a proper noun, or COMMON recurring game vocabulary
-        such as 商城/礼包/充值 where the standard Korean game UI word is wanted), propose exactly three Korean renderings
-        based on MEANING, never on the sound of the Chinese pronunciation:
-        LITERAL (직역: translate each element of the term word-for-word, e.g. 烈焰之剑 → 맹렬한 불꽃의 검),
-        MEANING (의역: the natural Korean name a game would actually use, e.g. 烈焰之剑 → 화염의 검),
-        MIXED (혼합: meaning combined with a common English/loanword element, e.g. 烈焰之剑 → 블레이징 소드).
-        Never give Sino-Korean sound readings of the Chinese characters (e.g. 열염지검) — that is transliteration and is not wanted.
-        Exception: when the Chinese term is itself a phonetic rendering of a foreign name (e.g. 阿努比斯 = Anubis), use the
-        established Korean spelling of that original name (아누비스) for all three, varying only the surrounding words.
-        The user message may list fixed translations of shorter terms. When a term contains one of them, every candidate
-        must reuse that Korean wording exactly (given 能量石 = 에너지 스톤 and 升星 = 성급 상승: 能量石选择 → 에너지 스톤 선택,
-        升星券 → 성급 상승권), adjusting only particles and word order. Never invent a different word for the same part.
-        Each "text" is the rendering itself and nothing else: no explanation, gloss or alternative in parentheses
-        (wrong: 만족(가득 찬 상태), 풀(가득) — right: 만족, 풀). Use parentheses only when the Chinese term itself has them.
-        Return ONLY JSON: {"items":[{"src":"<term>","candidates":[{"text":"...","style":"LITERAL"},{"text":"...","style":"MEANING"},{"text":"...","style":"MIXED"}]}]}.
-        "src" must be the Chinese term exactly as given, without the type in parentheses.
-        """;
-
-    static String suggestUser(List<TermInput> terms, Map<String, String> fixedParts) {
-        StringBuilder sb = new StringBuilder();
-        if (fixedParts != null && !fixedParts.isEmpty()) {
-            sb.append("Fixed translations of shorter terms (reuse exactly inside longer terms):\n");
-            for (Map.Entry<String, String> e : fixedParts.entrySet()) sb.append("- ").append(e.getKey()).append(" = ").append(e.getValue()).append('\n');
-            sb.append('\n');
-        }
-        sb.append("Terms:\n");
-        for (TermInput t : terms) sb.append("- ").append(t.src()).append(" (").append(t.type()).append(")\n");
         return sb.toString();
     }
 
@@ -285,6 +264,23 @@ public final class Prompts {
         renders that source term. Change as little as possible: keep the sentence structure, the ending style and every
         other part. Adjust particles (은/는, 이/가, 을/를, 와/과, 으로/로) to fit the inserted term. Keep placeholders such as
         {0}, %s, ${id} and markup tags exactly as in the source. A [note: …] only explains a term; never put it into the text.
+        Return ONLY JSON: {"items":[{"index":"<same index>","ko":"<corrected korean>"}]} with one item per input row.
+        """;
+
+    static final String TERM_SWAP_SYSTEM = """
+        You are a Korean game localization editor. The reviewer decided that a Chinese source term must be translated as one
+        given Korean word everywhere. Each row has the Simplified Chinese source (cn), an optional English text (en), the
+        current Korean (ko) and the rule (need: source term → required Korean).
+        In ko, find how that source term is rendered now — a different Korean word, an English word, Chinese left
+        untranslated, or dropped entirely — and rewrite only that part so the required Korean appears exactly as written.
+        If the term was dropped, put it back where it belongs. Numbers and codes attached to the term are written the way
+        the source writes them, with a space between the Korean word and the number (cn 关卡 54-14, ko Level 54·14 →
+        스테이지 54-14; cn 通关关卡2-26解锁, ko 2-26 클리어 후 해제 → 스테이지 2-26 클리어 후 해제).
+        If ko is still the untranslated Chinese source, translate the whole text into natural Korean using the required word
+        (cn 通关关卡, ko 通关关卡 → 스테이지 클리어). Never leave Chinese characters glued to the Korean word.
+        Change nothing else: keep the sentence structure, the ending style, spacing and line breaks. Adjust particles
+        (은/는, 이/가, 을/를, 와/과, 으로/로) to fit the new word. Keep placeholders such as {0}, %s, %d and markup tags exactly.
+        If the source term is only part of a longer word with a different meaning, return ko unchanged.
         Return ONLY JSON: {"items":[{"index":"<same index>","ko":"<corrected korean>"}]} with one item per input row.
         """;
 

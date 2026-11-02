@@ -26,8 +26,6 @@ import com.gametrans.review.ReviewDtos.SegmentsResponse;
 import com.gametrans.review.ReviewDtos.SheetStat;
 import com.gametrans.reviewer.Reviewer;
 import com.gametrans.reviewer.ReviewerService;
-import com.gametrans.term.TermDtos.TermUpdate;
-import com.gametrans.term.TermService;
 import com.gametrans.text.GlossaryCheck;
 import com.gametrans.text.LengthCheck;
 import com.gametrans.text.PlaceholderCheck;
@@ -57,7 +55,6 @@ public class ReviewService {
     private final BatchExecutor batches;
     private final AppProperties props;
     private final MemoryService memory;
-    private final TermService terms;
     private final ReviewerService reviewers;
     private final ReviewEvents events;
     private final DuplicateSyncService duplicates;
@@ -65,11 +62,10 @@ public class ReviewService {
     private final ActivityService activities;
 
     public ReviewService(SegmentRepository segments, RevisionService revisions, JobService jobs, JobRunner runner, LlmClient llm, AppProperties props,
-                         BatchExecutor batches, MemoryService memory, TermService terms, ReviewerService reviewers, ReviewEvents events,
+                         BatchExecutor batches, MemoryService memory, ReviewerService reviewers, ReviewEvents events,
                          DuplicateSyncService duplicates, TermMissService termMiss, ActivityService activities) {
         this.activities = activities;
         this.memory = memory;
-        this.terms = terms;
         this.batches = batches;
         this.segments = segments;
         this.revisions = revisions;
@@ -150,12 +146,6 @@ public class ReviewService {
         Segment s = segments.findById(segmentId).orElseThrow(() -> new NotFoundException("세그먼트를 찾을 수 없습니다: " + segmentId));
         String trimmed = text.trim();
         double ratio = ratioParam == null ? defaultRatio() : ratioParam;
-        // 용어 행을 고치면 그 행만이 아니라 용어 자체를 고친다 → 같은 원문의 모든 행과 게임 공용 용어집에 반영된다.
-        if (s.isTerm() && s.getTermId() != null) {
-            terms.update(s.getTermId(), new TermUpdate(trimmed, null));
-            events.refresh(s.getProjectId(), who == null ? null : who.getId());
-            return new ReviewDtos.SaveResult(row(segmentId, ratio), 0);
-        }
         Long by = who == null ? null : who.getId();
         // 변경 내역(설계 2026-09-30): 리비전이 실제로 하나라도 써질 때만 만든다. 대상 행이 그대로여도 같은 원문 행이
         // 따라 바뀌면 그 리비전들이 매달릴 활동은 있어야 하므로 지연 생성 함수로 넘긴다.
@@ -261,7 +251,7 @@ public class ReviewService {
         List<SegmentRow> targets = new ArrayList<>();
         int cleared = 0;
         for (SegmentRow r : rows(projectId, ratio)) {
-            if (r.termMiss().isEmpty() || r.isTerm() || r.currentText() == null) continue;
+            if (r.termMiss().isEmpty() || r.currentText() == null) continue;
             if (sheet != null && !sheet.equals(r.sheetName())) continue;
             if (ids != null && !ids.contains(r.id())) continue;
             Map<String, String> missing = missingTerms(r.srcText(), r.currentText(), glossary);
@@ -332,10 +322,9 @@ public class ReviewService {
         int lenKo = LengthCheck.count(current);
         boolean flagged = current != null && LengthCheck.flagged(s.getSrcText(), current, ratio);
         Reviewer editor = last == null || last.getReviewerId() == null ? null : who.get(last.getReviewerId());
-        return new SegmentRow(s.getId(), s.getIndexLabel(), s.getPairIndex(), s.getSrcText(), s.getEnText(), s.isTerm(), current,
+        return new SegmentRow(s.getId(), s.getIndexLabel(), s.getPairIndex(), s.getSrcText(), s.getEnText(), current,
                 s.getExistingKoText(), lenKo, lenSrc, flagged, GlossaryCheck.parse(s.getTermMiss()), s.getProofNote(), revs.stream().map(r -> RevisionDto.of(r, who)).toList(),
                 s.getSheetName(), s.getRowNo(), ReviewerService.ref(s.getAssigneeId() == null ? null : who.get(s.getAssigneeId())), s.isDone(),
-                // 고유명사 행은 교정에 보내지 않으므로(SegmentRepository.findProofPending과 같은 기준) 플래그가 남아 있어도 대기가 아니다
-                ReviewerService.ref(editor), editor == null ? null : last.getCreatedAt(), s.isProofPending() && !s.isTerm());
+                ReviewerService.ref(editor), editor == null ? null : last.getCreatedAt(), s.isProofPending());
     }
 }

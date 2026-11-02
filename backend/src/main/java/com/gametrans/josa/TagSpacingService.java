@@ -1,5 +1,7 @@
 package com.gametrans.josa;
 
+import com.gametrans.workspace.SheetScope;
+
 import com.gametrans.activity.Activity;
 import com.gametrans.activity.ActivityService;
 import com.gametrans.normalize.Segment;
@@ -25,7 +27,7 @@ public class TagSpacingService {
     static final int BATCH = 200;
 
     /** 후보 한 행: 지금 번역(before)과 태그 경계에 공백을 더한 꼴(after). */
-    public record Row(Long segmentId, Integer rowNo, String src, String before, String after) {}
+    public record Row(Long segmentId, Integer rowNo, String src, String before, String after, Long projectId, String sheet) {}
     /** 고칠 행 하나. before = 목록을 받을 때의 번역 — 그 사이 바뀐 행은 건너뛴다. after는 before와 공백만 달라야 한다. */
     public record Item(Long segmentId, String before, String after) {}
     public record FixRequest(List<Item> items) {}
@@ -47,8 +49,22 @@ public class TagSpacingService {
     @Transactional(readOnly = true)
     public List<Row> candidates(Long projectId, String sheet) {
         if (!josa.enabled()) throw new IllegalStateException("띄어쓰기 검사기가 꺼져 있습니다.");
-        List<SegmentRepository.TaggedRow> rows = segments.findEditableTaggedInSheet(projectId, sheet);
         List<Row> out = new ArrayList<>();
+        candidates(projectId, sheet, out);
+        return out;
+    }
+
+    /** 범위 판(게임 화면): 범위 안 시트를 차례로(게임 순서). */
+    @Transactional(readOnly = true)
+    public List<Row> candidates(SheetScope scope) {
+        if (!josa.enabled()) throw new IllegalStateException("띄어쓰기 검사기가 꺼져 있습니다.");
+        List<Row> out = new ArrayList<>();
+        for (SheetScope.SheetRef r : scope.sheets()) candidates(r.projectId(), r.sheet(), out);
+        return out;
+    }
+
+    private void candidates(Long projectId, String sheet, List<Row> out) {
+        List<SegmentRepository.TaggedRow> rows = segments.findEditableTaggedInSheet(projectId, sheet);
         for (int from = 0; from < rows.size(); from += BATCH) {
             List<SegmentRepository.TaggedRow> batch = rows.subList(from, Math.min(rows.size(), from + BATCH));
             List<String> spaced;
@@ -62,10 +78,9 @@ public class TagSpacingService {
                 SegmentRepository.TaggedRow r = batch.get(i);
                 String after = spaced.get(i);
                 if (after != null && !after.equals(r.getKo()) && onlySpacingDiffers(r.getKo(), after))
-                    out.add(new Row(r.getId(), r.getRowNo(), r.getSrc(), r.getKo(), after));
+                    out.add(new Row(r.getId(), r.getRowNo(), r.getSrc(), r.getKo(), after, projectId, sheet));
             }
         }
-        return out;
     }
 
     /**
@@ -74,6 +89,18 @@ public class TagSpacingService {
      */
     @Transactional
     public FixResult fix(Long projectId, FixRequest req, Long reviewerId) {
+        return fix(req, reviewerId, ids -> segments.findEditableInProject(projectId, ids));
+    }
+
+    /** 범위 판(게임 화면): 범위 안 행만 고친다. 바뀐 행은 파일마다 변경 내역 한 건. */
+    @Transactional
+    public FixResult fix(SheetScope scope, FixRequest req, Long reviewerId) {
+        java.util.Set<String> keys = new java.util.HashSet<>(scope.sheets().stream().map(SheetScope.SheetRef::key).toList());
+        return fix(req, reviewerId, ids -> segments.findEditableInProjects(scope.projectIds(), ids).stream()
+                .filter(s -> keys.contains(s.getProjectId() + "\u001e" + s.getSheetName())).toList());
+    }
+
+    private FixResult fix(FixRequest req, Long reviewerId, java.util.function.Function<java.util.Collection<Long>, List<Segment>> editable) {
         List<Item> items = req.items() == null ? List.of() : req.items().stream()
                 .filter(it -> it != null && it.segmentId() != null && it.before() != null && it.after() != null).toList();
         if (items.isEmpty()) throw new IllegalArgumentException("고칠 행이 없습니다.");
@@ -82,7 +109,7 @@ public class TagSpacingService {
                 throw new IllegalArgumentException("띄어쓰기만 다른 꼴만 고칠 수 있습니다: " + it.before());
         Map<Long, Item> byId = new LinkedHashMap<>();
         for (Item it : items) byId.putIfAbsent(it.segmentId(), it);
-        List<Segment> rows = segments.findEditableInProject(projectId, byId.keySet());
+        List<Segment> rows = editable.apply(byId.keySet());
         int applied = writer.write(rows, s -> {
             Item it = byId.get(s.getId());
             return it.before().equals(s.getLatestKo()) ? it.after() : null;

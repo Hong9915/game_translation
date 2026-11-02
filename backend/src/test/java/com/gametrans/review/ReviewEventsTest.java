@@ -46,7 +46,6 @@ class ReviewEventsTest extends IntegrationTest {
         fake.translations.put("一把附有火焰之力的长剑，攻击时有概率造成灼烧。", "화염의 힘이 깃든 장검. 공격 시 확률적으로 화상을 입힙니다.");
         fake.translations.put("使用后恢复{0}点生命值，冷却{1}秒。", "사용 시 HP {0} 회복. 재사용 대기 {1}초.");
         fake.translations.put("<color=#FFD700>传说</color> 品质装备", "<color=#FFD700>전설</color> 등급 장비");
-        fake.termsToReturn = List.of(new LlmClient.TermExtraction("烈焰之剑", "ITEM"));
     }
 
     long translated() throws Exception {
@@ -67,17 +66,6 @@ class ReviewEventsTest extends IntegrationTest {
     long plainSegment(long pid) throws Exception {
         String list = mvc.perform(get("/api/projects/{id}/segments", pid)).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         return ((Number) JsonPath.parse(list).read("$.rows[2].id")).longValue();
-    }
-
-    /** 용어를 하나 추출·확정해 isTerm==true인 행을 만든다(샘플 워크북 자체에는 확정된 용어 행이 없다). */
-    long confirmedTermSegment(long pid) throws Exception {
-        mvc.perform(post("/api/projects/{id}/terms/extract", pid));
-        String terms = mvc.perform(get("/api/projects/{id}/terms", pid)).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        long termId = firstLong(terms, "$.terms[?(@.srcText=='烈焰之剑')].id");
-        mvc.perform(patch("/api/terms/{id}", termId).contentType(MediaType.APPLICATION_JSON)
-                .content("{\"confirmedKo\":\"화염의 검\",\"confirmed\":true}"));
-        String list = mvc.perform(get("/api/projects/{id}/segments", pid)).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        return firstLong(list, "$.rows[?(@.isTerm==true)].id");
     }
 
     private static long firstLong(String json, String path) {
@@ -133,17 +121,6 @@ class ReviewEventsTest extends IntegrationTest {
         List<ReviewEvents.Assigned> cleared = reviewEvents(pid, ReviewEvents.Assigned.class);
         assertThat(cleared.get(0).assignee()).isNull();
         assertThat(cleared.get(0).segmentIds()).containsExactly(sid);
-    }
-
-    @Test
-    void editingATermRowAsksClientsToRefreshBecauseManyRowsChange() throws Exception {
-        long pid = translated();
-        long termSegmentId = confirmedTermSegment(pid);
-        clearInvocations(bus);
-        mvc.perform(put("/api/segments/{id}/translation", termSegmentId).contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"불꽃검\"}"));
-        List<ReviewEvents.Refresh> refreshes = reviewEvents(pid, ReviewEvents.Refresh.class);
-        assertThat(refreshes).hasSize(1);
-        assertThat(refreshes.get(0).by()).isNull();   // 헤더 없이 고친 익명 수정
     }
 
     /** 이름이 바뀌면 그 사람이 담당으로 찍혀 있는 프로젝트의 열린 화면들은 목록을 다시 읽어야 새 이름을 본다. */

@@ -20,17 +20,6 @@ class PromptsTest {
     }
 
     @Test
-    void frequentPhrasesAreListedWithCountsInTheExtractPrompt() {
-        java.util.LinkedHashMap<String, Integer> freq = new java.util.LinkedHashMap<>();
-        freq.put("商城", 12); freq.put("礼包", 7);
-        String user = Prompts.extractUser(List.of("在商城购买礼包"), freq);
-        assertThat(user).contains("Frequent phrases");
-        assertThat(user).contains("- 商城 (12)").contains("- 礼包 (7)");
-        assertThat(Prompts.extractUser(List.of("在商城购买礼包"), Map.of())).doesNotContain("Frequent phrases");
-        assertThat(Prompts.EXTRACT_SYSTEM).contains("frequent phrases");
-    }
-
-    @Test
     void noReferencesMeansNoReferenceSection() {
         String sys = Prompts.translateSystem(new TranslateBatchRequest("CN_ONLY", null, Map.of(),
                 List.of(new TranslateRow("a", "你好", null)), List.of()));
@@ -42,5 +31,24 @@ class PromptsTest {
         String sys = Prompts.translateSystem(new TranslateBatchRequest("CN_ONLY", null, Map.of("金币", "골드 (의역: 게임 내 기본 화폐)"),
                 List.of(new TranslateRow("a", "获得金币", null)), List.of()));
         assertThat(sys).contains("- 金币 → 골드 [note: 의역: 게임 내 기본 화폐]").doesNotContain("골드 (의역");
+    }
+
+    @Test
+    void draftTermsPutsCategoryRuleAndKnownTerms() {
+        String user = Prompts.draftTermsUser(new LlmClient.TermDraftRequest("CHARACTER", List.of("森之召唤师"),
+                List.of(new Reference("陷阱", "함정")), List.of("짧게")));
+        assertThat(user).startsWith("Decide first whether each term is a personal name or a title/epithet.");
+        assertThat(user).contains("Already decided in this game (keep naming consistent with these):\n- 陷阱 → 함정");
+        assertThat(user).contains("Game style notes:\n- 짧게");
+        assertThat(user).contains("- 森之召唤师");
+    }
+
+    @Test
+    void draftTermsUsesTheCategoryRuleAndSkipsEmptySections() {
+        String user = Prompts.draftTermsUser(new LlmClient.TermDraftRequest("CURRENCY", List.of("金"), List.of(), List.of()));
+        assertThat(user).startsWith("Prefer the established Korean game term (钻石 → 다이아, 公会 → 길드, 体力 → 스태미나).");
+        assertThat(user).doesNotContain("Already decided").doesNotContain("Game style notes");
+        assertThat(Prompts.draftTermsUser(new LlmClient.TermDraftRequest("MONSTER", List.of("暗影狼王"), List.of(), List.of())))
+                .startsWith("Translate by meaning, short and natural, the way Korean mobile games name them.");
     }
 }

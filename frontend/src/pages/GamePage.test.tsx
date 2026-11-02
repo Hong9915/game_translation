@@ -5,7 +5,7 @@ import { mockFetch } from '../test/mockFetch'
 import { renderWithProviders } from '../test/render'
 import { GamePage } from './GamePage'
 
-const game = { id: 3, name: '드래곤 레이드', projects: 2, terms: 120, memory: 2318, lastUploadedAt: '2026-09-15T09:00:00Z', createdAt: '2026-09-01T00:00:00Z' }
+const game = { id: 3, name: '드래곤 레이드', projects: 2, memory: 2318, lastUploadedAt: '2026-09-15T09:00:00Z', createdAt: '2026-09-01T00:00:00Z' }
 const projects = [
   { id: 1, fileName: 'ItemText_v3.xlsx', gameId: 3, gameName: '드래곤 레이드', sheetCount: 4, rowCount: 2318, uploadedAt: '2026-09-15T09:00:00Z', currentStep: 4 },
   { id: 2, fileName: 'skill_desc_cn.xlsx', gameId: 3, gameName: '드래곤 레이드', sheetCount: 1, rowCount: 864, uploadedAt: '2026-09-11T09:00:00Z', currentStep: 1 },
@@ -88,7 +88,7 @@ describe('GamePage', () => {
     ])
     render()
     await userEvent.click(await screen.findByRole('button', { name: '게임 삭제' }))
-    expect(screen.getByText(/파일 2개와 용어집·번역 메모리가 모두 지워집니다/)).toBeInTheDocument()
+    expect(screen.getByText(/파일 2개와 번역 메모리가 모두 지워집니다/)).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '취소' }))
     expect(screen.queryByRole('button', { name: '정말 삭제' })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '게임 삭제' }))
@@ -129,5 +129,50 @@ describe('GamePage', () => {
     const buttons = await screen.findAllByRole('button', { name: '이어서 진행' })
     await userEvent.click(buttons[0])
     expect(screen.getByTestId('location')).toHaveTextContent('/normalize/11')
+  })
+
+  it('최종 리뷰로 정규화한 파일에만 "최종 리뷰" 배지를 붙인다', async () => {
+    mockFetch([{ path: '/games/3', body: game }, { path: '/projects', body: [{ ...projects[0], finalReview: true }, projects[1]] }])
+    render()
+    const finalRow = (await screen.findByText('ItemText_v3.xlsx')).closest('tr')!
+    expect(within(finalRow).getByText('최종 리뷰')).toBeInTheDocument()
+    expect(within(screen.getByText('skill_desc_cn.xlsx').closest('tr')!).queryByText('최종 리뷰')).toBeNull()
+  })
+
+  describe('단어장 요청', () => {
+    const summary = { id: 3, fileName: '단어장_요청양식.xlsx', createdAt: '2026-10-30T09:00:00Z', total: 42, approved: 5, pending: 37 }
+    // 구체적인 경로를 먼저 둔다(첫 일치가 이긴다).
+    const base = [{ path: '/games/3/glossary/requests', body: [summary] }, { path: '/games/3', body: game }, { path: '/projects', body: [] }]
+
+    it('단어장 요청 올리기로 양식을 올리면 요청 화면으로 간다', async () => {
+      const { calls } = mockFetch([
+        { method: 'POST', path: '/games/3/glossary/requests', body: { id: 3, gameId: 3, fileName: 'f.xlsx', createdAt: '2026-10-30T09:00:00Z', items: [] } },
+        ...base,
+      ])
+      render()
+      await screen.findByRole('heading', { name: '드래곤 레이드' })
+      await userEvent.upload(screen.getByLabelText('단어장 요청 양식 선택'), xlsx('f.xlsx'))
+      await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/games/3/glossary/requests/3'))
+      expect(calls.find((c) => c.method === 'POST')?.body).toMatchObject({ file: expect.any(File) })
+    })
+
+    it('지난 단어장 요청을 승인 수와 함께 보여 준다', async () => {
+      mockFetch(base)
+      render()
+      expect(await screen.findByText(/승인 5\/42/)).toBeInTheDocument()
+      // 09:00Z는 어느 시간대에서도 10월 30일이다 — 로컬 날짜 형식(ko-KR)으로 보인다
+      expect(screen.getByText(/단어장_요청양식\.xlsx · 2026\. 10\. 30\. · 승인 5\/42/)).toBeInTheDocument()
+    })
+
+    it('양식이 아니면 서버 메시지를 보여 준다', async () => {
+      mockFetch([
+        { method: 'POST', path: '/games/3/glossary/requests', status: 400, body: { message: '단어장 요청양식이 아닙니다' } },
+        ...base,
+      ])
+      render()
+      await screen.findByRole('heading', { name: '드래곤 레이드' })
+      await userEvent.upload(screen.getByLabelText('단어장 요청 양식 선택'), xlsx('bad.xlsx'))
+      expect(await screen.findByText('단어장 요청양식이 아닙니다')).toBeInTheDocument()
+    })
   })
 })

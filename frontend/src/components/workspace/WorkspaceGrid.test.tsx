@@ -7,7 +7,7 @@ import { WorkspaceGrid } from './WorkspaceGrid'
 
 const row = (i: number, over: Partial<WorkspaceRow> = {}): WorkspaceRow => ({
   id: 100 + i, rowNo: i + 2, pairIndex: 0, indexLabel: `UI!${i + 2}`, keyText: `UI_${i}`, src: '混沌圣物', en: 'Chaos Relic', existingKo: '혼돈의 성물', fix: '혼돈의 성물',
-  changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0, ...over,
+  changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, finalReview: false, finalMark: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0, ...over,
 })
 const noop = () => {}
 function renderGrid(rows: (WorkspaceRow | undefined)[], over: Partial<ComponentProps<typeof WorkspaceGrid>> = {}) {
@@ -248,10 +248,15 @@ describe('WorkspaceGrid', () => {
     expect(screen.queryByText('×1')).not.toBeInTheDocument()
   })
 
-  it('칩을 누르면 그 원문으로 중복 필터를 건다', async () => {
+  it('칩을 누르면 같은 행 / 포함된 전체 행 중 골라 그 원문으로 모아 본다', async () => {
     const { props } = renderGrid([row(0, { dupCount: 5, src: '混沌圣物' })])
     await userEvent.click(screen.getByText('×5'))
-    expect(props.onFilterDuplicates).toHaveBeenCalledWith('混沌圣物')
+    await userEvent.click(screen.getByRole('menuitem', { name: '같은 행 보기' }))
+    expect(props.onFilterDuplicates).toHaveBeenLastCalledWith('混沌圣物', 'exact')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByText('×5'))
+    await userEvent.click(screen.getByRole('menuitem', { name: '포함된 전체 행 보기' }))
+    expect(props.onFilterDuplicates).toHaveBeenLastCalledWith('混沌圣物', 'contains')
   })
 
   it('원문 셀 우클릭에서 단어장에 추가를 부른다', async () => {
@@ -329,53 +334,22 @@ describe('WorkspaceGrid', () => {
     expect(screen.queryByRole('textbox', { name: '2행 Fix' })).not.toBeInTheDocument()
   })
 
-  it('원문 셀 우클릭 → GPT 번역 → 추가 지시를 넣고 번역하면 그 행과 지시로 onTranslate를 부르고 지시를 기억한다', async () => {
-    localStorage.removeItem('gametrans.rowTranslateInstructions')
+  it('원문 셀 우클릭 → DeepL 번역을 누르면 지시 창 없이 바로 그 행으로 onTranslate를 부른다', async () => {
     const onTranslate = vi.fn()
     const r = row(0)
-    const { unmount } = renderGrid([r], { onTranslate })
-    fireEvent.contextMenu(screen.getByText(r.src))
-    await userEvent.click(screen.getByRole('menuitem', { name: 'GPT 번역' }))
-    const box = screen.getByRole('textbox', { name: '추가 지시' })
-    expect(box).toHaveValue('')
-    await userEvent.type(box, '10자 이내로')
-    await userEvent.click(screen.getByRole('button', { name: '번역' }))
-    expect(onTranslate).toHaveBeenCalledWith(expect.objectContaining({ id: r.id }), '10자 이내로')
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    unmount()
-
-    // 다음에 열면 직전 지시가 채워져 있다
     renderGrid([r], { onTranslate })
     fireEvent.contextMenu(screen.getByText(r.src))
-    await userEvent.click(screen.getByRole('menuitem', { name: 'GPT 번역' }))
-    expect(screen.getByRole('textbox', { name: '추가 지시' })).toHaveValue('10자 이내로')
-  })
-
-  it('추가 지시 창에서 Enter는 번역, Esc는 번역 없이 닫고, 입력한 글자가 그리드 편집으로 새지 않는다', async () => {
-    localStorage.removeItem('gametrans.rowTranslateInstructions')
-    const onTranslate = vi.fn()
-    const r = row(0)
-    const { props } = renderGrid([r], { onTranslate })
-    fireEvent.contextMenu(screen.getByText(r.src))
-    await userEvent.click(screen.getByRole('menuitem', { name: 'GPT 번역' }))
-    fireEvent.keyDown(screen.getByRole('textbox', { name: '추가 지시' }), { key: 'Escape' })
+    await userEvent.click(screen.getByRole('menuitem', { name: 'DeepL 번역' }))
+    expect(onTranslate).toHaveBeenCalledWith(expect.objectContaining({ id: r.id }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(onTranslate).not.toHaveBeenCalled()
-
-    fireEvent.contextMenu(screen.getByText(r.src))
-    await userEvent.click(screen.getByRole('menuitem', { name: 'GPT 번역' }))
-    const box = screen.getByRole('textbox', { name: '추가 지시' })
-    await userEvent.type(box, '존댓말{Enter}')
-    expect(onTranslate).toHaveBeenCalledWith(expect.objectContaining({ id: r.id }), '존댓말')
-    expect(screen.queryByRole('textbox', { name: '2행 Fix' })).not.toBeInTheDocument()
-    expect(props.onSave).not.toHaveBeenCalled()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
-  it('체크된 행에서도 GPT 번역 메뉴가 켜져 있다', () => {
+  it('체크된 행에서도 DeepL 번역 메뉴가 켜져 있다', () => {
     const r = row(0, { review1: true, review2: true })
     renderGrid([r], { onTranslate: vi.fn() })
     fireEvent.contextMenu(screen.getByText(r.src))
-    expect(screen.getByRole('menuitem', { name: 'GPT 번역' })).toBeEnabled()
+    expect(screen.getByRole('menuitem', { name: 'DeepL 번역' })).toBeEnabled()
   })
 
   it('기존 한국어 셀 우클릭 → 짧게 줄이기 → 후보를 고르면 그 행에 onSave로 저장한다', async () => {
@@ -406,18 +380,18 @@ describe('WorkspaceGrid', () => {
     expect(screen.getByRole('menuitem', { name: '짧게 줄이기' })).toBeEnabled()
   })
 
-  it('Fix 셀 우클릭 메뉴에는 GPT 번역이 없다', () => {
+  it('Fix 셀 우클릭 메뉴에는 DeepL 번역이 없다', () => {
     const r = row(0, { fix: '고친 한국어' })
     renderGrid([r], { onTranslate: vi.fn() })
     fireEvent.contextMenu(screen.getByText(r.fix!))
-    expect(screen.queryByRole('menuitem', { name: 'GPT 번역' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'DeepL 번역' })).not.toBeInTheDocument()
   })
 
-  it('번역 중인 행의 Fix는 "GPT 번역 중…"을 보이고 편집이 열리지 않는다', () => {
+  it('번역 중인 행의 Fix는 "번역 중…"을 보이고 편집이 열리지 않는다', () => {
     const r = row(0)
     renderGrid([r], { translating: new Set([r.id]) })
     const cell = screen.getByRole('gridcell', { name: '2행 Fix' })
-    expect(cell).toHaveTextContent('GPT 번역 중…')
+    expect(cell).toHaveTextContent('번역 중…')
     fireEvent.doubleClick(cell)
     expect(screen.queryByRole('textbox', { name: '2행 Fix' })).not.toBeInTheDocument()
   })
@@ -430,9 +404,9 @@ describe('WorkspaceGrid', () => {
     await userEvent.click(screen.getByRole('gridcell', { name: '2행 Fix' }))
     expect(bar).toHaveTextContent('2행 · 수정 한국어 (Fix)')
     expect(bar).toHaveTextContent(long)
-    fireEvent.click(screen.getAllByRole('gridcell')[2])
+    fireEvent.mouseDown(screen.getAllByRole('gridcell')[2], { button: 0 })
     expect(bar).toHaveTextContent('2행 · 간체 원문')
-    expect(bar).toHaveTextContent('活动期间烹饪<color=#78fa5a>限定</color>')
+    expect(within(bar).getByRole('textbox', { name: '선택한 칸 내용 보기' })).toHaveValue('活动期间烹饪<color=#78fa5a>限定</color>')
     await userEvent.dblClick(screen.getByRole('gridcell', { name: '2행 Fix' }))
     await userEvent.type(screen.getByRole('textbox', { name: '2행 Fix' }), '!')
     expect(within(bar).getByRole('textbox', { name: '선택한 칸 편집' })).toHaveValue(long + '!')
@@ -442,8 +416,8 @@ describe('WorkspaceGrid', () => {
     const { props } = renderGrid([row(0), row(1)])
     const bar = screen.getByRole('region', { name: '선택한 칸 내용' })
     // Fix가 아닌 칸은 보기만 한다
-    fireEvent.click(screen.getAllByRole('gridcell')[2])
-    expect(within(bar).queryByRole('textbox')).not.toBeInTheDocument()
+    fireEvent.mouseDown(screen.getAllByRole('gridcell')[2], { button: 0 })
+    expect(within(bar).queryByRole('textbox', { name: '선택한 칸 편집' })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('gridcell', { name: '2행 Fix' }))
     const input = within(bar).getByRole('textbox', { name: '선택한 칸 편집' })
     expect(input).toHaveValue('혼돈의 성물')
@@ -519,5 +493,168 @@ describe('WorkspaceGrid', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     fireEvent.contextMenu(screen.getByText('성물'))
     expect(screen.getByRole('menuitem', { name: '변경 내역 보기' })).toBeInTheDocument()
+  })
+
+  it('칸은 마우스를 누르는 순간 골라지고, 고른 칸만 글자를 고를 수 있다', () => {
+    renderGrid([row(0), row(1)])
+    const bar = screen.getByRole('region', { name: '선택한 칸 내용' })
+    const src = screen.getAllByRole('gridcell')[2]
+    fireEvent.mouseDown(src, { button: 0 })
+    expect(bar).toHaveTextContent('2행 · 간체 원문')
+    expect(screen.getByRole('grid').querySelector('table')!.className).toContain('select-none')
+    expect(src.className).toContain('select-text')
+    expect(screen.getByRole('gridcell', { name: '2행 Fix' }).className).not.toContain('select-text')
+  })
+
+  it('우클릭은 칸을 바꾸지 않는다', () => {
+    renderGrid([row(0)])
+    const bar = screen.getByRole('region', { name: '선택한 칸 내용' })
+    fireEvent.mouseDown(screen.getByRole('gridcell', { name: '2행 Fix' }), { button: 0 })
+    fireEvent.mouseDown(screen.getAllByRole('gridcell')[2], { button: 2 })
+    expect(bar).toHaveTextContent('2행 · 수정 한국어 (Fix)')
+  })
+
+  it('체크 칸을 한 번 누르면 체크가 한 번만 바뀐다', async () => {
+    const { props } = renderGrid([row(0)])
+    await userEvent.click(screen.getByRole('gridcell', { name: '2행 A' }))
+    expect(props.onMarks).toHaveBeenCalledTimes(1)
+    expect(props.onMarks).toHaveBeenCalledWith(expect.objectContaining({ id: 100 }), { review1: true })
+  })
+
+  it('Ctrl/⌘+A는 고른 칸의 값 글자만 고른다 — 배지는 빼고, 한글 자판이어도', () => {
+    renderGrid([row(0, { fix: '아군의 생명를 회복', josaHints: [{ at: 4, from: '생명를', to: '생명을', kind: 'HANGUL' }] }), row(1)])
+    const grid = screen.getByRole('grid')
+    fireEvent.mouseDown(screen.getByRole('gridcell', { name: '2행 Fix' }), { button: 0 })
+    fireEvent.keyDown(grid, { key: 'ㅁ', code: 'KeyA', metaKey: true })
+    expect(window.getSelection()!.toString()).toBe('아군의 생명를 회복')
+    fireEvent.keyDown(grid, { key: 'ArrowLeft' })   // 기존 한국어
+    fireEvent.keyDown(grid, { key: 'a', code: 'KeyA', ctrlKey: true })
+    expect(window.getSelection()!.toString()).toBe('혼돈의 성물')
+  })
+
+  it('체크 칸·# 칸에서 Ctrl+A는 아무것도 고르지 않고 화면 전체 선택도 막는다', () => {
+    renderGrid([row(0)])
+    const grid = screen.getByRole('grid')
+    fireEvent.mouseDown(screen.getByRole('gridcell', { name: '2행 A' }), { button: 0 })
+    const ev = new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', ctrlKey: true, bubbles: true, cancelable: true })
+    grid.dispatchEvent(ev)
+    expect(ev.defaultPrevented).toBe(true)
+    expect(window.getSelection()!.toString()).toBe('')
+  })
+
+  it('고른 칸이 화면 밖(가상 스크롤로 DOM에 없음)이어도 Ctrl+A는 오류 없이 지나간다', () => {
+    const rows = Array.from({ length: 2000 }, (_, i) => row(i))
+    renderGrid(rows, { restore: { cell: { row: 1999, col: 'fix' }, scrollTop: 0 } })
+    const grid = screen.getByRole('grid')
+    expect(() => fireEvent.keyDown(grid, { key: 'a', code: 'KeyA', ctrlKey: true })).not.toThrow()
+    expect(window.getSelection()!.toString()).toBe('')
+  })
+
+  describe('Ctrl/⌘+C', () => {
+    const stubClipboard = () => {
+      const writeText = vi.fn(() => Promise.resolve())
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      return writeText
+    }
+
+    it('글자를 안 골랐으면 고른 칸의 전체 값을 복사한다(저장 실패 입력이 있으면 그 값), 한글 자판이어도', () => {
+      const writeText = stubClipboard()
+      renderGrid([row(0)], { failedText: new Map([[100, { text: '고친 글', base: '혼돈의 성물' }]]) })
+      window.getSelection()!.removeAllRanges()
+      const grid = screen.getByRole('grid')
+      fireEvent.mouseDown(screen.getByRole('gridcell', { name: '2행 Fix' }), { button: 0 })
+      fireEvent.keyDown(grid, { key: 'ㅊ', code: 'KeyC', metaKey: true })
+      expect(writeText).toHaveBeenCalledWith('고친 글')
+    })
+
+    it('고른 칸 안에 글자를 골라 뒀으면 브라우저 기본 복사에 맡긴다', () => {
+      const writeText = stubClipboard()
+      renderGrid([row(0)])
+      const grid = screen.getByRole('grid')
+      fireEvent.mouseDown(screen.getByRole('gridcell', { name: '2행 Fix' }), { button: 0 })
+      fireEvent.keyDown(grid, { key: 'a', code: 'KeyA', ctrlKey: true })
+      fireEvent.keyDown(grid, { key: 'c', code: 'KeyC', ctrlKey: true })
+      expect(writeText).not.toHaveBeenCalled()
+    })
+
+    it('Ctrl+A로 고른 뒤 다른 칸으로 옮기면 지금 칸 값을 복사한다', () => {
+      const writeText = stubClipboard()
+      renderGrid([row(0, { src: '圣物' })])
+      const grid = screen.getByRole('grid')
+      fireEvent.mouseDown(screen.getByRole('gridcell', { name: '2행 Fix' }), { button: 0 })
+      fireEvent.keyDown(grid, { key: 'a', code: 'KeyA', ctrlKey: true })
+      fireEvent.keyDown(grid, { key: 'ArrowLeft' })   // 기존 한국어
+      fireEvent.keyDown(grid, { key: 'ArrowLeft' })   // 영어
+      fireEvent.keyDown(grid, { key: 'ArrowLeft' })   // 원문
+      expect(window.getSelection()!.toString()).toBe('')
+      fireEvent.keyDown(grid, { key: 'c', code: 'KeyC', ctrlKey: true })
+      expect(writeText).toHaveBeenCalledWith('圣物')
+    })
+
+    it('체크 칸에서는 아무것도 복사하지 않는다', () => {
+      const writeText = stubClipboard()
+      renderGrid([row(0)])
+      window.getSelection()!.removeAllRanges()
+      const grid = screen.getByRole('grid')
+      fireEvent.mouseDown(screen.getByRole('gridcell', { name: '2행 A' }), { button: 0 })
+      fireEvent.keyDown(grid, { key: 'c', code: 'KeyC', ctrlKey: true })
+      expect(writeText).not.toHaveBeenCalled()
+    })
+
+    it('고른 칸이 화면 밖이어도 데이터로 값을 복사한다', () => {
+      const writeText = stubClipboard()
+      const rows = Array.from({ length: 2000 }, (_, i) => row(i, { fix: `행 ${i}` }))
+      renderGrid(rows, { restore: { cell: { row: 1999, col: 'fix' }, scrollTop: 0 } })
+      window.getSelection()!.removeAllRanges()
+      fireEvent.keyDown(screen.getByRole('grid'), { key: 'c', code: 'KeyC', ctrlKey: true })
+      expect(writeText).toHaveBeenCalledWith('행 1999')
+    })
+  })
+
+  it('원문·영어·기존 한국어·ID를 고르면 위 입력줄은 읽기 전용 글 상자다 — ⌘A·⌘C가 그 안에서만 되고 Esc로 표로 돌아간다', async () => {
+    renderGrid([row(0)])
+    const bar = screen.getByRole('region', { name: '선택한 칸 내용' })
+    fireEvent.mouseDown(screen.getByRole('gridcell', { name: '2행 Fix' }), { button: 0 })
+    fireEvent.keyDown(screen.getByRole('grid'), { key: 'ArrowLeft' })   // 기존 한국어
+    const view = within(bar).getByRole('textbox', { name: '선택한 칸 내용 보기' })
+    expect(view).toHaveValue('혼돈의 성물')
+    expect(view).toHaveAttribute('readonly')
+    await userEvent.click(view)
+    await userEvent.type(view, 'X')
+    expect(view).toHaveValue('혼돈의 성물')
+    fireEvent.keyDown(view, { key: 'Escape' })
+    expect(screen.getByRole('grid')).toHaveFocus()
+    // # 칸·체크 칸은 보일 글이 없어 글 상자가 없다
+    fireEvent.mouseDown(screen.getByRole('gridcell', { name: '2행 A' }), { button: 0 })
+    expect(within(bar).queryByRole('textbox')).not.toBeInTheDocument()
+  })
+
+  it('위 입력줄에서 고치다 글이 아닌 칸을 눌러도 입력을 저장하고 키보드가 그대로 된다', async () => {
+    const { props } = renderGrid([row(0), row(1)])
+    const bar = screen.getByRole('region', { name: '선택한 칸 내용' })
+    await userEvent.click(screen.getByRole('gridcell', { name: '2행 Fix' }))
+    const input = within(bar).getByRole('textbox', { name: '선택한 칸 편집' })
+    await userEvent.click(input)
+    await userEvent.type(input, '!')
+    // 실제 브라우저에서는 mousedown 처리 중 다시 그려져 입력줄이 blur 전에 사라진다 — focus 이동 없이 mousedown만 보낸다
+    fireEvent.mouseDown(screen.getAllByRole('gridcell')[2], { button: 0 })
+    expect(props.onSave).toHaveBeenCalledWith(expect.objectContaining({ id: 100 }), '혼돈의 성물!')
+    fireEvent.keyDown(screen.getByRole('grid'), { key: 'ArrowDown' })
+    expect(bar).toHaveTextContent('3행 · 간체 원문')
+  })
+
+  it('최종 리뷰 시트는 최종 수정 열을 보이고, 표시한 행만 Fix를 연두로 칠한다', async () => {
+    const { props } = renderGrid([row(0, { changed: true, finalReview: true }), row(1, { changed: true, finalReview: true, finalMark: true })], { finalReview: true })
+    expect(screen.getByRole('columnheader', { name: '최종 수정' })).toBeInTheDocument()
+    expect(screen.getByRole('gridcell', { name: '2행 Fix' }).className).not.toMatch(/fff7d6|e6f4d7/)
+    expect(screen.getByRole('gridcell', { name: '3행 Fix' }).className).toMatch(/e6f4d7/)
+    await userEvent.click(screen.getByRole('gridcell', { name: '2행 최종 수정' }))
+    expect(props.onMarks).toHaveBeenCalledWith(expect.objectContaining({ id: 100 }), { finalMark: true })
+  })
+
+  it('일반 시트는 최종 수정 열이 없고 달라진 Fix는 노랑 그대로', () => {
+    renderGrid([row(0, { changed: true })])
+    expect(screen.queryByRole('columnheader', { name: '최종 수정' })).toBeNull()
+    expect(screen.getByRole('gridcell', { name: '2행 Fix' }).className).toMatch(/fff7d6/)
   })
 })

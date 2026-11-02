@@ -21,18 +21,19 @@ export function applyMarks(row: WorkspaceRow, patch: MarksPatch): WorkspaceRow {
     ...(patch.review2 !== undefined ? { review2: patch.review2 } : {}),
     ...(patch.needsCheck !== undefined ? { needsCheck: patch.needsCheck } : {}),
     ...(patch.confirmed !== undefined ? { confirmed: patch.confirmed } : {}),
+    ...(patch.finalMark !== undefined ? { finalMark: patch.finalMark } : {}),
     ...(patch.note !== undefined ? { note: patch.note } : {}),
   }
 }
 
-const MARK_FIELDS = ['review1', 'review2', 'needsCheck', 'confirmed', 'note'] as const
+const MARK_FIELDS = ['review1', 'review2', 'needsCheck', 'confirmed', 'finalMark', 'note'] as const
 
 /**
  * 체크 응답에서 체크·비고 칸만 가져온다. 응답 행 전체로 바꾸면, 체크 요청이 Fix 저장보다 먼저 행을 읽고 늦게 도착했을 때
  * 방금 저장한 Fix·이력이 옛 값으로 돌아간다.
  */
 export function withMarksOf(cached: WorkspaceRow, response: WorkspaceRow): WorkspaceRow {
-  return { ...cached, review1: response.review1, review2: response.review2, needsCheck: response.needsCheck, confirmed: response.confirmed, note: response.note }
+  return { ...cached, review1: response.review1, review2: response.review2, needsCheck: response.needsCheck, confirmed: response.confirmed, finalMark: response.finalMark, note: response.note }
 }
 
 /**
@@ -68,6 +69,7 @@ export function patchRows(data: WorkspaceRowsResponse, ev: ReviewEvent): Workspa
       ...(ev.review2 !== null ? { review2: ev.review2 } : {}),
       ...(ev.needsCheck !== null ? { needsCheck: ev.needsCheck } : {}),
       ...(ev.confirmed !== null ? { confirmed: ev.confirmed } : {}),
+      ...(ev.finalMark != null ? { finalMark: ev.finalMark } : {}),
       ...(ev.noteChanged ? { note: ev.note } : {}),
     }
     return { ...data, rows: data.rows.map((r) => (ids.has(r.id) ? applyMarks(r, patch) : r)) }

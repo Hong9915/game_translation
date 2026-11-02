@@ -21,8 +21,8 @@ class FakeEventSource {
 const me = { id: 1, name: '형준', color: '#1f4b99' }
 const key = ['workspace-rows', 5, 'UI', 'ALL', '', 0]
 const summaryKey = ['workspace-summary', 5, 'UI']
-const row = { id: 3, rowNo: 4, pairIndex: 0, indexLabel: 'UI!4', keyText: 'K', src: '确认', en: null, existingKo: '확인', fix: '확인', changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0 }
-const seg = { id: 3, indexLabel: 'UI!4', srcText: '确认', enText: null, isTerm: false, currentText: '확인함', lenKo: 3, lenSrc: 2, flagged: false, history: [] }
+const row = { id: 3, rowNo: 4, pairIndex: 0, indexLabel: 'UI!4', keyText: 'K', src: '确认', en: null, existingKo: '확인', fix: '확인', changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, finalReview: false, finalMark: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0 }
+const seg = { id: 3, indexLabel: 'UI!4', srcText: '确认', enText: null, currentText: '확인함', lenKo: 3, lenSrc: 2, flagged: false, history: [] }
 
 function setup() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -62,16 +62,22 @@ describe('useWorkspaceEvents', () => {
     expect(result.current.presence.map((p) => p.name)).toEqual(['지민'])
   })
 
-  it('invalidates rows and summary on refresh', () => {
+  it('invalidates rows, summary and reviewers 500ms after refresh', () => {
+    vi.useFakeTimers()
     vi.stubGlobal('EventSource', FakeEventSource)
     const { qc, wrapper } = setup()
+    qc.setQueryData(['reviewers'], [])
     renderHook(() => useWorkspaceEvents(5, me), { wrapper })
     act(() => FakeEventSource.instances[0].emit('review', { type: 'refresh', by: null }))
+    expect(qc.getQueryState(key)?.isInvalidated).toBe(false)
+    act(() => { vi.advanceTimersByTime(500) })
+    expect(qc.getQueryState(['reviewers'])?.isInvalidated).toBe(true)
     expect(qc.getQueryState(key)?.isInvalidated).toBe(true)
     expect(qc.getQueryState(summaryKey)?.isInvalidated).toBe(true)
   })
 
   it('patches marks and flashes the rows; marks-bulk reloads rows and summary', () => {
+    vi.useFakeTimers()
     vi.stubGlobal('EventSource', FakeEventSource)
     const { qc, wrapper } = setup()
     const { result } = renderHook(() => useWorkspaceEvents(5, me), { wrapper })
@@ -79,7 +85,23 @@ describe('useWorkspaceEvents', () => {
     expect(qc.getQueryData<WorkspaceRowsResponse>(key)?.rows[0]).toMatchObject({ review1: true, review2: true })
     expect(result.current.highlighted.has(3)).toBe(true)
     act(() => FakeEventSource.instances[0].emit('review', { type: 'marks-bulk', by: 7, sheet: 'UI' }))
+    act(() => { vi.advanceTimersByTime(500) })
     expect(qc.getQueryState(key)?.isInvalidated).toBe(true)
+    expect(qc.getQueryState(summaryKey)?.isInvalidated).toBe(true)
+  })
+
+  it('게임 화면에 파일마다 온 marks-bulk·refresh 묶음은 500ms 안에 목록·요약을 한 번만 다시 읽는다', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const { qc, wrapper } = setup()
+    const spy = vi.spyOn(qc, 'invalidateQueries')
+    renderHook(() => useWorkspaceEvents(5, me), { wrapper })
+    const es = FakeEventSource.instances[0]
+    const rowsCalls = () => spy.mock.calls.filter(([f]) => (f as { queryKey?: unknown[] })?.queryKey?.[0] === 'workspace-rows').length
+    act(() => { for (let i = 0; i < 41; i++) es.emit('review', i % 2 ? { type: 'refresh', by: null } : { type: 'marks-bulk', by: 7, sheet: null }) })
+    expect(rowsCalls()).toBe(0)
+    act(() => { vi.advanceTimersByTime(500) })
+    expect(rowsCalls()).toBe(1)
     expect(qc.getQueryState(summaryKey)?.isInvalidated).toBe(true)
   })
 

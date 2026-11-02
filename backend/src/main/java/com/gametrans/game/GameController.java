@@ -2,7 +2,6 @@ package com.gametrans.game;
 
 import com.gametrans.game.GameDtos.GameDto;
 import com.gametrans.game.GameDtos.GameRequest;
-import com.gametrans.game.GameDtos.GameTermDto;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -11,6 +10,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -28,8 +28,6 @@ public class GameController {
     @GetMapping("/{id}")
     public GameDto get(@PathVariable Long id) { return service.summary(service.get(id)); }
 
-    @GetMapping("/{id}/terms")
-    public List<GameTermDto> terms(@PathVariable Long id) { return service.terms(id); }
 
     @PostMapping
     public ResponseEntity<GameDto> create(@RequestBody GameRequest req) {
@@ -38,6 +36,11 @@ public class GameController {
 
     @PatchMapping("/{id}")
     public GameDto rename(@PathVariable Long id, @RequestBody GameRequest req) { return service.summary(service.rename(id, req.name())); }
+
+    @PutMapping("/{id}/deepl-instructions")
+    public GameDto deepLInstructions(@PathVariable Long id, @RequestBody GameDtos.DeepLInstructionsRequest req) {
+        return service.summary(service.setDeepLInstructions(id, req.text()));
+    }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {

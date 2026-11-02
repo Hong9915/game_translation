@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { mockFetch } from '../test/mockFetch'
@@ -31,10 +31,61 @@ const routes = (current: unknown = emptyCurrent) => [
   { path: '/sheets', body: sheets },
   { method: 'GET', path: /\/projects\/7\/normalize/, body: current },
   { method: 'PUT', path: '/projects/7/normalize', body: normalized },
+  { method: 'POST', path: '/projects/7/translate', body: { id: 99, projectId: 7, kind: 'TRANSLATE', status: 'RUNNING', totalBatches: 0, doneBatches: 0, logs: [] } },
   { path: '/projects/7', body: project },
 ]
 
 describe('NormalizePage v2', () => {
+  it('starts a DeepL translation of the empty rows after normalizing when asked', async () => {
+    const { calls } = mockFetch(routes())
+    render()
+    await screen.findByRole('combobox', { name: 'B열 역할' })
+    await userEvent.click(screen.getByRole('checkbox', { name: /빈 행을 DeepL로 번역/ }))
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: '번역 원문' }), 'EN')
+    await userEvent.click(screen.getByRole('button', { name: '이 시트 정규화' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url.includes('/projects/7/translate'))).toBe(true))
+    const start = calls.find((c) => c.method === 'POST' && c.url.includes('/projects/7/translate'))!
+    expect(start.body).toEqual({ sheet: 'Skill', sourceLang: 'EN' })
+    expect(calls.findIndex((c) => c.method === 'PUT')).toBeLessThan(calls.indexOf(start))
+  })
+
+  it('shows the game DeepL instructions and saves an edit before starting the translation', async () => {
+    const game = { id: project.gameId, name: 'g', projects: 1, memory: 0, lastUploadedAt: null, createdAt: '2026-09-01T00:00:00Z', deeplInstructions: '짧게' }
+    const { calls } = mockFetch([{ method: 'PUT', path: `/games/${project.gameId}/deepl-instructions`, body: game }, { path: `/games/${project.gameId}`, body: game }, ...routes()])
+    render()
+    await screen.findByRole('combobox', { name: 'B열 역할' })
+    await userEvent.click(screen.getByRole('checkbox', { name: /빈 행을 DeepL로 번역/ }))
+    const box = screen.getByRole('textbox', { name: 'DeepL 지시문' })
+    await waitFor(() => expect(box).toHaveValue('짧게'))
+    await userEvent.clear(box)
+    await userEvent.type(box, '게임 용어로')
+    await userEvent.click(screen.getByRole('button', { name: '이 시트 정규화' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url.includes('/projects/7/translate'))).toBe(true))
+    const put = calls.findIndex((c) => c.method === 'PUT' && c.url.includes('/deepl-instructions'))
+    expect(calls[put].body).toEqual({ text: '게임 용어로' })
+    expect(put).toBeLessThan(calls.findIndex((c) => c.method === 'POST' && c.url.includes('/projects/7/translate')))
+  })
+
+  it('does not start a translation unless asked', async () => {
+    const { calls } = mockFetch(routes())
+    render()
+    await screen.findByRole('combobox', { name: 'B열 역할' })
+    await userEvent.click(screen.getByRole('button', { name: '이 시트 정규화' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.some((c) => c.url.includes('/translate'))).toBe(false)
+  })
+
+  it('offers English only when a pair has an English column', async () => {
+    mockFetch(routes())
+    render()
+    await screen.findByRole('combobox', { name: 'B열 역할' })
+    await userEvent.click(screen.getByRole('checkbox', { name: /빈 행을 DeepL로 번역/ }))
+    const lang = () => within(screen.getByRole('combobox', { name: '번역 원문' }))
+    expect(lang().getByRole('option', { name: '영어 원문' })).not.toBeDisabled()
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'C열 역할' }), '— 없음 —')
+    expect(lang().getByRole('option', { name: '영어 원문' })).toBeDisabled()
+  })
+
   it('preselects the guessed roles and the new fix column', async () => {
     mockFetch(routes())
     render()
@@ -199,5 +250,34 @@ describe('NormalizePage v2', () => {
 
     expect(screen.getByRole('radio', { name: /새 열로 추가/ })).toBeChecked()
     expect(screen.getByRole('radio', { name: /기존 한국어 열에 덮어쓰기/ })).toBeDisabled()
+  })
+
+  // 최종 리뷰 버전: 켜야만 "수정 한국어" 역할이 보이고, 그 열을 Fix로 읽고 거기에 쓴다.
+  it('reads an already fixed korean column only in final review mode', async () => {
+    const { calls } = mockFetch(routes())
+    render()
+    const c = await screen.findByRole('combobox', { name: 'C열 역할' })
+    expect(within(c).queryByRole('option', { name: '수정 한국어' })).toBeNull()
+
+    await userEvent.click(screen.getByRole('checkbox', { name: /최종 리뷰 버전/ }))
+    // Fix 쓸 곳 선택은 사라진다 — 수정 한국어 열에 쓴다
+    expect(screen.queryByRole('radio', { name: /새 열로 추가/ })).toBeNull()
+    // 수정 한국어 열을 고르기 전엔 정규화할 수 없다
+    expect(screen.getByRole('button', { name: '이 시트 정규화' })).toBeDisabled()
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'C열 역할' }), 'FIX:0')
+    await userEvent.click(screen.getByRole('button', { name: '이 시트 정규화' }))
+    await waitFor(() => expect(calls.some((x) => x.method === 'PUT')).toBe(true))
+    const put = calls.find((x) => x.method === 'PUT')!
+    expect((put.body as { pairs: unknown[] }).pairs[0]).toMatchObject({ srcCol: 'B', enCol: null, koCol: 'D', fixCol: 'C', koColMode: 'EXISTING_TO_NEW', koHeader: null })
+  })
+
+  it('opens a sheet saved as final review with the option on', async () => {
+    const saved = { ...normalized, configs: [{ ...normalized.configs[0], config: { ...normalized.configs[0].config, pairs: [{ srcCol: 'B', enCol: null, koColMode: 'EXISTING_TO_NEW', koCol: 'D', koHeader: null, fixCol: 'C' }] } }] }
+    mockFetch(routes(saved))
+    render()
+    await screen.findByRole('combobox', { name: 'C열 역할' })
+    expect(screen.getByRole('checkbox', { name: /최종 리뷰 버전/ })).toBeChecked()
+    expect(screen.getByRole('combobox', { name: 'C열 역할' })).toHaveValue('FIX:0')
   })
 })

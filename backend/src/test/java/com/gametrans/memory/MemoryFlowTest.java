@@ -37,52 +37,13 @@ class MemoryFlowTest extends IntegrationTest {
         fake.translations.clear();
         fake.dropOnce.clear();
         fake.breakPlaceholdersOnce.clear();
-        fake.candidatesToReturn.clear();
-        fake.termsToReturn = List.of(new LlmClient.TermExtraction("烈焰之剑", "ITEM"), new LlmClient.TermExtraction("霜语者", "CHARACTER"));
         game = "G-" + UUID.randomUUID().toString().substring(0, 8);  // 테스트 간 DB 공유 대비
-    }
-
-    private long termId(long pid, String src) throws Exception {
-        String body = mvc.perform(get("/api/projects/{id}/terms", pid)).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        List<?> ids = JsonPath.parse(body).read("$.terms[?(@.srcText=='" + src + "')].id", List.class);
-        return ((Number) ids.get(0)).longValue();
     }
 
     private long segmentId(long pid, String indexLabel) throws Exception {
         String body = mvc.perform(get("/api/projects/{id}/segments", pid)).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         List<?> ids = JsonPath.parse(body).read("$.rows[?(@.indexLabel=='" + indexLabel + "')].id", List.class);
         return ((Number) ids.get(0)).longValue();
-    }
-
-    @Test
-    void confirmedTermIsConfirmedAutomaticallyInTheNextProjectOfTheSameGame() throws Exception {
-        long a = TestProjects.upload(mvc, game);
-        TestProjects.normalize(mvc, a);
-        mvc.perform(post("/api/projects/{id}/terms/extract", a)).andExpect(status().isOk());
-        mvc.perform(patch("/api/terms/{id}", termId(a, "霜语者")).contentType(MediaType.APPLICATION_JSON)
-                .content("{\"confirmedKo\":\"서리속삭임\",\"confirmed\":true}")).andExpect(status().isOk());
-
-        long b = TestProjects.uploadVariant(mvc, game);
-        TestProjects.normalize(mvc, b);
-        mvc.perform(post("/api/projects/{id}/terms/extract", b)).andExpect(status().isOk())
-                .andExpect(jsonPath("$.logs[*]").value(org.hamcrest.Matchers.hasItem(org.hamcrest.Matchers.containsString("게임 용어집에서 1개 자동 확정"))));
-        mvc.perform(get("/api/projects/{id}/terms", b))
-                .andExpect(jsonPath("$.terms[?(@.srcText=='霜语者')].confirmedKo").value("서리속삭임"))
-                .andExpect(jsonPath("$.terms[?(@.srcText=='霜语者')].confirmed").value(true))
-                .andExpect(jsonPath("$.stats.confirmed").value(1));
-
-        long c = TestProjects.uploadVariant(mvc, game + "-other");
-        TestProjects.normalize(mvc, c);
-        mvc.perform(post("/api/projects/{id}/terms/extract", c)).andExpect(status().isOk());
-        mvc.perform(get("/api/projects/{id}/terms", c))
-                .andExpect(jsonPath("$.terms.length()").value(1))
-                .andExpect(jsonPath("$.terms[0].srcText").value("霜语者"))
-                .andExpect(jsonPath("$.terms[0].confirmedKo").doesNotExist());
-
-        mvc.perform(get("/api/games"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.name=='" + game + "')].projects").value(2))
-                .andExpect(jsonPath("$[?(@.name=='" + game + "')].terms").value(1));
     }
 
     @Test
@@ -184,14 +145,11 @@ class MemoryFlowTest extends IntegrationTest {
                 .andExpect(jsonPath("$.rows[0].history[0].author").value("MEMORY"));
     }
 
-    /** 다른 게임에서 진행했던 프로젝트를 이 게임으로 옮기면, 이미 확정한 용어와 완성 번역이 이 게임의 공유 자산이 된다. */
+    /** 다른 게임에서 진행했던 프로젝트를 이 게임으로 옮기면, 완성 번역이 이 게임의 번역 메모리가 된다. */
     @Test
     void movingAProjectToAnotherGameSharesWhatItAlreadyHas() throws Exception {
         long a = TestProjects.upload(mvc, game + "-old");
         TestProjects.normalize(mvc, a);
-        mvc.perform(post("/api/projects/{id}/terms/extract", a)).andExpect(status().isOk());
-        mvc.perform(patch("/api/terms/{id}", termId(a, "霜语者")).contentType(MediaType.APPLICATION_JSON)
-                .content("{\"confirmedKo\":\"서리속삭임\",\"confirmed\":true}")).andExpect(status().isOk());
         mvc.perform(post("/api/projects/{id}/translate", a).contentType(MediaType.APPLICATION_JSON).content("{\"basis\":\"CN_ONLY\"}"))
                 .andExpect(status().isOk());
         mvc.perform(put("/api/segments/{id}/translation", segmentId(a, "ItemText!6")).contentType(MediaType.APPLICATION_JSON)
@@ -202,14 +160,10 @@ class MemoryFlowTest extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.gameName").value(game));
         mvc.perform(get("/api/games"))
-                .andExpect(jsonPath("$[?(@.name=='" + game + "')].terms").value(1))
-                .andExpect(jsonPath("$[?(@.name=='" + game + "')].memory").value(5));  // 번역된 5행 (용어 행 포함)
+                .andExpect(jsonPath("$[?(@.name=='" + game + "')].memory").value(5));  // 번역된 5행
 
         long b = TestProjects.uploadVariant(mvc, game);
         TestProjects.normalize(mvc, b);
-        mvc.perform(post("/api/projects/{id}/terms/extract", b)).andExpect(status().isOk());
-        mvc.perform(get("/api/projects/{id}/terms", b))
-                .andExpect(jsonPath("$.terms[?(@.srcText=='霜语者')].confirmedKo").value("서리속삭임"));
         mvc.perform(post("/api/projects/{id}/translate", b).contentType(MediaType.APPLICATION_JSON).content("{\"basis\":\"CN_ONLY\"}"))
                 .andExpect(status().isOk());
         mvc.perform(get("/api/projects/{id}/segments", b))

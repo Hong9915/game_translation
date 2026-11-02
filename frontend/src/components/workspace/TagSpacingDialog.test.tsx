@@ -14,9 +14,16 @@ const routes = (applied = 2) => [
   { path: '/review/7/tag-spacing?sheet=Skill', body: rows },
   { method: 'POST', path: '/review/7/tag-spacing', body: { applied } },
 ]
-const render = (onFixed = vi.fn(), onClose = vi.fn()) => { renderWithProviders(<TagSpacingDialog projectId={7} sheet="Skill" onFixed={onFixed} onClose={onClose} />); return { onFixed, onClose } }
+const render = (onFixed = vi.fn(), onClose = vi.fn()) => { renderWithProviders(<TagSpacingDialog target={{ kind: 'project', projectId: 7, sheet: 'Skill' }} label="Skill" onFixed={onFixed} onClose={onClose} />); return { onFixed, onClose } }
 
 describe('TagSpacingDialog', () => {
+  it('게임 범위면 게임 경로로 묻고 행 앞에 시트 이름을 붙인다', async () => {
+    mockFetch([{ path: '/games/3/review/tag-spacing?sheets=5%2C6', body: [{ ...rows[0], projectId: 9, sheet: 'Item' }] }])
+    renderWithProviders(<TagSpacingDialog target={{ kind: 'game', gameId: 3, sheetIds: [5, 6] }} label="시트 2개" onFixed={vi.fn()} onClose={vi.fn()} />)
+    expect(await screen.findByText('Item 4행')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: '태그 띄어쓰기' })).toHaveTextContent('태그 띄어쓰기 · 시트 2개')
+  })
+
   it('후보 행을 전부 고른 채로 보이고, 새로 넣을 공백을 칠한다', async () => {
     mockFetch(routes())
     render()

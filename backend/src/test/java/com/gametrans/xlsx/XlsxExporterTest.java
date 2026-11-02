@@ -58,7 +58,7 @@ class XlsxExporterTest {
             assertThat(history.getRow(1).getCell(0).getStringCellValue()).isEqualTo("ItemText!2");
             org.apache.poi.ss.usermodel.Cell reviewerCell = history.getRow(1).getCell(4);
             assertThat(reviewerCell == null || reviewerCell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK).isTrue();
-            assertThat(wb.getSheet("용어집")).isNull();
+            assertThat(wb.getSheet("단어장")).isNull();
             assertThat(wb.getNumberOfSheets()).isEqualTo(3);
         }
     }
@@ -71,7 +71,7 @@ class XlsxExporterTest {
         try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(out))) {
             assertThat(wb.getSheet("ItemText").getRow(1).getCell(3).getStringCellValue()).isEqualTo("화염의 검");
             assertThat(wb.getSheet("ItemText").getRow(0).getCell(4)).isNull();
-            assertThat(wb.getSheet("용어집").getRow(1).getCell(2).getStringCellValue()).isEqualTo("화염의 검");
+            assertThat(wb.getSheet("단어장").getRow(1).getCell(2).getStringCellValue()).isEqualTo("화염의 검");
         }
         assertThat(exporter.layout(TestWorkbooks.sample(), c).koIdxs()).containsExactly(3);
         assertThat(exporter.layout(TestWorkbooks.sample(), cfg()).koIdxs()).containsExactly(4);

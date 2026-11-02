@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api")
 public class ActivityController {
-    static final int FEED_DEFAULT = 50;
+    public static final int FEED_DEFAULT = 50;
     static final int ROWS_DEFAULT = 20;
 
     private final ActivityService service;

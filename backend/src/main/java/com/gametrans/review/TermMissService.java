@@ -9,6 +9,7 @@ import com.gametrans.normalize.SegmentRepository;
 import com.gametrans.project.ProjectRepository;
 import com.gametrans.text.GlossaryCheck;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.springframework.stereotype.Service;
@@ -60,23 +61,32 @@ public class TermMissService {
 
     /**
      * 시트 하나의 용어 불일치를 지금 단어장으로 다시 계산한다. 값이 달라진 행만 쓰고 그 수를 돌려준다.
-     * 대상은 저장(saveHuman)·용어 고치기가 term_miss를 다루는 행과 같다 — 제외(skipped) 행과 용어(is_term) 행은 뺀다.
-     * 용어 행은 번역이 용어 자체라 저장할 때도 불일치를 다시 보지 않는다.
+     * 대상은 저장(saveHuman)·용어 고치기가 term_miss를 다루는 행과 같다 — 제외(skipped) 행은 뺀다.
      * 지금 Fix는 리비전 이력을 긁지 않고 트리거가 유지하는 latest_ko(읽기 전용)로 본다.
      */
     @Transactional
     public int recompute(Long projectId, String sheet) {
         if (sheet == null || sheet.isBlank()) throw new IllegalArgumentException("다시 계산할 시트를 고르세요.");
-        Map<String, String> glossary = glossaryFor(projectId);
+        // 용어 불일치는 단어장만 보고 같은 원문 묶음을 쓰지 않으므로 레인은 의미가 없다
+        return recompute(new com.gametrans.workspace.SheetScope(gameIdOf(projectId),
+                List.of(new com.gametrans.workspace.SheetScope.SheetRef(null, projectId, sheet, false)), false));
+    }
+
+    /** 범위 판(게임 화면): 범위 안 시트를 차례로. 단어장은 게임 단위라 파일이 달라도 같은 걸 쓴다. */
+    @Transactional
+    public int recompute(com.gametrans.workspace.SheetScope scope) {
         int changed = 0;
-        for (Segment s : segments.findByProjectIdAndSheetNameAndSkippedFalseOrderByRowNoAscPairIndexAsc(projectId, sheet)) {
-            if (s.isTerm()) continue;
-            String termMiss = GlossaryCheck.format(GlossaryCheck.missing(s.getSrcText(), s.getLatestKo(), glossary));
-            if (Objects.equals(termMiss, s.getTermMiss())) continue;
-            segments.updateTermMiss(s.getId(), termMiss);
-            changed++;
+        Map<Long, Map<String, String>> glossaries = new java.util.HashMap<>();
+        for (com.gametrans.workspace.SheetScope.SheetRef r : scope.sheets()) {
+            Map<String, String> glossary = glossaries.computeIfAbsent(r.projectId(), this::glossaryFor);
+            for (Segment s : segments.findByProjectIdAndSheetNameAndSkippedFalseOrderByRowNoAscPairIndexAsc(r.projectId(), r.sheet())) {
+                String termMiss = GlossaryCheck.format(GlossaryCheck.missing(s.getSrcText(), s.getLatestKo(), glossary));
+                if (Objects.equals(termMiss, s.getTermMiss())) continue;
+                segments.updateTermMiss(s.getId(), termMiss);
+                changed++;
+            }
         }
-        events.refresh(projectId, null);
+        for (Long pid : scope.projectIds()) events.refresh(pid, null);
         return changed;
     }
 }

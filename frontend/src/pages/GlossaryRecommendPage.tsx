@@ -5,16 +5,15 @@ import { api } from '../api/client'
 import type { GlossaryRecommendation } from '../api/types'
 import { VariantsTab } from '../components/glossary/VariantsTab'
 
-type SortKey = 'rank' | 'find' | 'ko' | 'sentences' | 'rows' | 'share' | 'termKo'
+type SortKey = 'rank' | 'find' | 'ko' | 'sentences' | 'rows' | 'share'
 /** 서버가 준 한 줄에 화면 계산값을 붙인 것. rank = 문장 수 순위, ko = 첫 번째 지금 번역, share = 그 표기가 든 행의 비율. */
-interface Line extends GlossaryRecommendation { rank: number; ko: string | null; share: number; differs: boolean }
+interface Line extends GlossaryRecommendation { rank: number; ko: string | null; share: number }
 
 /** 표기가 이 비율보다 적은 행에만 들어 있으면 번역이 갈린다고 본다. */
 const LOW_SHARE = 0.7
 /** 많은 쪽이 먼저 보여야 하는 열. 나머지는 처음 누르면 오름차순. */
 const DESC_FIRST: SortKey[] = ['sentences', 'rows']
 
-const squash = (s: string | null) => (s ?? '').replace(/\s+/g, '')
 
 function mark(text: string, needle: string | null): ReactNode {
   if (!needle) return text
@@ -41,8 +40,6 @@ export function GlossaryRecommendPage() {
   const [tab, setTab] = useState<'recommend' | 'variants'>('recommend')
   const [variantsOpened, setVariantsOpened] = useState(false)   // 한 번 열면 탭을 바꿔도 처리한 카드가 남도록 계속 마운트해 둔다
   const [search, setSearch] = useState('')
-  const [onlyNew, setOnlyNew] = useState(false)
-  const [onlyDiffers, setOnlyDiffers] = useState(false)
   const [onlyLow, setOnlyLow] = useState(false)
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'rank', dir: 1 })
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
@@ -66,17 +63,14 @@ export function GlossaryRecommendPage() {
     const top = r.renderings[0] ?? null
     return {
       ...r, rank: i + 1, ko: top?.ko ?? null, share: top && r.rows > 0 ? top.rows / r.rows : 0,
-      differs: r.termKo !== null && top !== null && squash(r.termKo) !== squash(top.ko),
     }
   }), [list.data])
-  // 옛 파이프라인 용어집이 없는 게임에서는 비교할 것이 없으니 그 열과 필터를 아예 내지 않는다
-  const hasTerms = useMemo(() => lines.some((l) => l.termKo !== null), [lines])
 
   const q = useDeferredValue(search).trim().toLowerCase()
   const shown = useMemo(() => lines
-    .filter((l) => (!q || [l.find, l.termKo ?? '', ...l.renderings.map((r) => r.ko)].some((t) => t.toLowerCase().includes(q)))
-      && (!onlyNew || l.termKo === null) && (!onlyDiffers || l.differs) && (!onlyLow || l.share < LOW_SHARE))
-    .sort((a, b) => compare(a, b, sort.key) * sort.dir), [lines, q, onlyNew, onlyDiffers, onlyLow, sort])
+    .filter((l) => (!q || [l.find, ...l.renderings.map((r) => r.ko)].some((t) => t.toLowerCase().includes(q)))
+      && (!onlyLow || l.share < LOW_SHARE))
+    .sort((a, b) => compare(a, b, sort.key) * sort.dir), [lines, q, onlyLow, sort])
 
   const sortBy = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: DESC_FIRST.includes(key) ? -1 : 1 }))
   const toggle = (find: string) => setOpen((prev) => { const next = new Set(prev); if (!next.delete(find)) next.add(find); return next })
@@ -88,7 +82,6 @@ export function GlossaryRecommendPage() {
     { key: 'sentences', label: '문장', className: 'w-20 text-right' },
     { key: 'rows', label: '행', className: 'w-20 text-right' },
     { key: 'share', label: '그 표기가 든 행', className: 'w-40' },
-    ...(hasTerms ? [{ key: 'termKo' as const, label: '용어집 번역' }] : []),
   ]
   const check = 'flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-[13px] text-body'
 
@@ -111,12 +104,6 @@ export function GlossaryRecommendPage() {
         <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
           <input aria-label="원문·한국어 검색" type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="원문·한국어 검색"
             className="w-64 rounded-lg border border-line bg-white px-3 py-1.5 text-[13px] outline-none transition-shadow focus:border-primary focus:ring-4 focus:ring-primary/10" />
-          {hasTerms && (
-            <>
-              <label className={check}><input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} />용어집에 없는 것만</label>
-              <label className={check}><input type="checkbox" checked={onlyDiffers} onChange={(e) => setOnlyDiffers(e.target.checked)} />용어집 번역과 다른 것만</label>
-            </>
-          )}
           <label className={check}><input type="checkbox" checked={onlyLow} onChange={(e) => setOnlyLow(e.target.checked)} />표기 비율 70% 미만만</label>
           <span className="ml-auto text-[13px] tabular-nums text-muted">{shown.length.toLocaleString()} / {lines.length.toLocaleString()}개</span>
         </div>
@@ -164,13 +151,6 @@ export function GlossaryRecommendPage() {
                           </span>
                         )}
                       </td>
-                      {hasTerms && (
-                        <td className="px-2 py-2">
-                          {l.termKo === null
-                            ? <span className="rounded-full border border-purple px-1.5 py-px text-[11px] text-purple">용어집에 없음</span>
-                            : <span className={l.differs ? 'text-orange' : ''}>{l.termKo}</span>}
-                        </td>
-                      )}
                     </tr>
                     {open.has(l.find) && (
                       <tr className="border-b border-lineSoft bg-canvas">

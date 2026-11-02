@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
 
-/** 검수 그리드 보기: 시트 전체를 스크롤하거나, 50·100행씩 쪽을 넘긴다. */
-export type ViewSize = 'all' | 50 | 100
+/** 검수 그리드 보기: 시트 전체를 스크롤하거나, 25·50·100행씩 쪽을 넘긴다. */
+export type ViewSize = 'all' | 25 | 50 | 100
 
-const SIZES: { value: ViewSize; label: string }[] = [{ value: 'all', label: '전체' }, { value: 50, label: '50행' }, { value: 100, label: '100행' }]
+const SIZES: { value: ViewSize; label: string }[] = [{ value: 'all', label: '전체' }, { value: 25, label: '25행' }, { value: 50, label: '50행' }, { value: 100, label: '100행' }]
 
 /** 보기 선택 버튼 묶음. 시트 바 오른쪽에 둔다. */
 export function ViewSizePicker({ value, onChange }: { value: ViewSize; onChange: (v: ViewSize) => void }) {
   return (
-    <div role="group" aria-label="보기" className="mb-1 flex items-center gap-1 text-xs text-muted">
+    <div role="group" aria-label="보기" className="mb-1 flex items-center gap-1 whitespace-nowrap text-xs text-muted">
       보기
       <div className="flex overflow-hidden rounded border border-line">
         {SIZES.map((s) => (
@@ -40,7 +40,7 @@ export function PageBar({ page, size, total, onPage }: PageBarProps) {
   const to = Math.min(total, (page + 1) * size)
   const btn = 'press rounded border border-line px-1.5 py-0.5 hover:bg-canvas disabled:opacity-40 disabled:hover:bg-transparent'
   return (
-    <div role="group" aria-label="쪽 이동" className="mb-1 flex items-center gap-1 text-xs text-body">
+    <div role="group" aria-label="쪽 이동" className="mb-1 flex items-center gap-1 whitespace-nowrap text-xs text-body">
       <button type="button" aria-label="처음 쪽" className={btn} disabled={page === 0} onClick={() => onPage(0)}>«</button>
       <button type="button" aria-label="이전 쪽" className={btn} disabled={page === 0} onClick={() => onPage(page - 1)}>‹</button>
       <input type="text" inputMode="numeric" aria-label="쪽 번호" value={draft} onChange={(e) => setDraft(e.target.value)}

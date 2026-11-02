@@ -1,6 +1,7 @@
 package com.gametrans.translate;
 
 import com.gametrans.config.AppProperties;
+import com.gametrans.deepl.DeepLTranslator;
 import com.gametrans.job.BatchExecutor;
 import com.gametrans.job.JobContext;
 import com.gametrans.job.JobDtos.JobDto;
@@ -13,11 +14,12 @@ import com.gametrans.llm.LlmClient.TranslateRow;
 import com.gametrans.llm.LlmClient.TranslationResult;
 import com.gametrans.normalize.Segment;
 import com.gametrans.normalize.SegmentRepository;
+import com.gametrans.project.ProjectRepository;
 import com.gametrans.project.ProjectService;
 import com.gametrans.glossary.GlossaryPrompt;
 import com.gametrans.review.TermMissService;
-import com.gametrans.term.TermService;
 import com.gametrans.memory.MemoryService;
+import com.gametrans.text.EmptyMarkers;
 import com.gametrans.text.GlossaryCheck;
 import com.gametrans.text.PlaceholderCheck;
 import com.gametrans.translate.TranslateDtos.TranslateRequest;
@@ -33,7 +35,6 @@ import org.springframework.stereotype.Service;
 @Service
 public class TranslationService {
     private final SegmentRepository segments;
-    private final TermService terms;
     private final RevisionService revisions;
     private final JobService jobs;
     private final JobRunner runner;
@@ -43,18 +44,22 @@ public class TranslationService {
     private final AppProperties props;
     private final MemoryService memory;
     private final TermMissService termMiss;
+    private final DeepLTranslator translator;
+    private final ProjectRepository projectRepo;
 
     /** 프로젝트별 마지막 실행의 묶음 크기 (상태 카드 표시용). */
     private final Map<Long, Integer> lastBatchSize = new ConcurrentHashMap<>();
 
-    public TranslationService(SegmentRepository segments, TermService terms, RevisionService revisions, JobService jobs,
+    public TranslationService(SegmentRepository segments, RevisionService revisions, JobService jobs,
                               JobRunner runner, LlmClient llm, ProjectService projects, AppProperties props,
-                              BatchExecutor batches, MemoryService memory, TermMissService termMiss) {
+                              BatchExecutor batches, MemoryService memory, TermMissService termMiss,
+                              DeepLTranslator translator, ProjectRepository projectRepo) {
+        this.translator = translator;
+        this.projectRepo = projectRepo;
         this.memory = memory;
         this.termMiss = termMiss;
         this.batches = batches;
         this.segments = segments;
-        this.terms = terms;
         this.revisions = revisions;
         this.jobs = jobs;
         this.runner = runner;
@@ -65,6 +70,15 @@ public class TranslationService {
 
     public JobDto start(Long projectId, TranslateRequest req) {
         projects.get(projectId);
+        if (props.translate().deepl()) {
+            if (!translator.configured()) throw new IllegalArgumentException("DeepL 키가 없습니다. DEEPL_AUTH_KEY를 설정하세요.");
+            String lang = "EN".equalsIgnoreCase(req.sourceLang()) ? "EN" : "ZH";
+            String sheet = req.sheet() == null || req.sheet().isBlank() ? null : req.sheet();
+            projectRepo.updateTranslateSourceLang(projectId, lang);
+            TranslationJob job = jobs.create(projectId, TranslationJob.Kind.TRANSLATE);
+            runner.run(job.getId(), ctx -> translateDeepL(ctx, projectId, sheet, lang));
+            return jobs.get(job.getId());
+        }
         int batchSize = req.batchSize() == null || req.batchSize() < 1 ? props.translate().batchSize() : req.batchSize();
         String basis = "CN_ONLY".equals(req.basis()) ? "CN_ONLY" : "EN_FIRST";
         TranslationJob job = jobs.create(projectId, TranslationJob.Kind.TRANSLATE);
@@ -75,13 +89,10 @@ public class TranslationService {
     }
 
     void translate(JobContext ctx, Long projectId, String basis, String instructions, int batchSize) {
-        // 같은 게임에서 확정해 둔 용어는 이 파일에서 다시 확정하지 않아도 고정 용어로 쓴다.
-        int fromGame = terms.applyGameGlossary(projectId);
-        if (fromGame > 0) ctx.log("게임 용어집에서 " + fromGame + "개 자동 확정");
         // 용어 누락 표시와 재시도·메모리 재사용 판단은 게임의 유효 단어장으로 한다(검수 화면의 표시와 같은 기준).
-        // 프롬프트에는 구 용어도 계속 넣는다 — 같은 원문이면 단어장이 이긴다.
+        // 프롬프트에는 같은 단어장을 메모째 넣는다.
         Map<String, String> glossary = termMiss.glossaryFor(projectId);
-        Map<String, String> prompt = GlossaryPrompt.merge(terms.glossary(projectId), termMiss.promptTermsFor(projectId));
+        Map<String, String> prompt = termMiss.promptTermsFor(projectId);
         List<Segment> targets = fillFromMemory(ctx, projectId, segments.findUntranslated(projectId), glossary);
         MemoryService.Lookup mem = memory.lookup(projectId);
         List<List<Segment>> batchList = new ArrayList<>();
@@ -134,6 +145,64 @@ public class TranslationService {
         long proofPending = segments.countProofPending(projectId);
         ctx.log("완료: " + translated + "행 번역, 남은 미번역 " + remaining + "행" + (proofPending == 0 ? "" : ", 교정 판정 대기 " + proofPending + "행"));
         if (remaining == 0 && proofPending == 0) projects.bumpStep(projectId, 5);
+    }
+
+    /** DeepL 묶음 크기(행). 번역기가 안에서 원문 50개씩 나눠 보낸다 — 이건 진행 표시와 실패 범위의 단위다. */
+    static final int DEEPL_CHUNK = 500;
+
+    /** DeepL로 빈 행을 채운다(설계 2026-10-12 §1). 묶음 하나가 실패하면 그 행은 미번역으로 남겨 다음 실행에서 다시 한다. */
+    void translateDeepL(JobContext ctx, Long projectId, String sheet, String sourceLang) {
+        Map<String, String> glossary = termMiss.glossaryFor(projectId);
+        List<Segment> untranslated = segments.findUntranslated(projectId).stream()
+                .filter(s -> sheet == null || sheet.equals(s.getSheetName())).toList();
+        List<Segment> targets = fillFromMemory(ctx, projectId, untranslated, glossary);
+        int fromMemory = untranslated.size() - targets.size();
+        Long gameId = termMiss.gameIdOf(projectId);
+        List<List<Segment>> chunks = new ArrayList<>();
+        for (int i = 0; i < targets.size(); i += DEEPL_CHUNK) chunks.add(targets.subList(i, Math.min(i + DEEPL_CHUNK, targets.size())));
+        ctx.log("DeepL 번역 시작: " + targets.size() + "행" + (sheet == null ? "" : " (시트 " + sheet + ")") + ("EN".equals(sourceLang) ? " · 영어 원문" : ""));
+        ctx.progress(0, chunks.size());
+        int deepl = 0, cached = 0, flagged = 0, chars = 0, failed = 0;
+        for (int c = 0; c < chunks.size(); c++) {
+            if (ctx.stopRequested()) { ctx.log("중지됨"); break; }
+            List<Segment> chunk = chunks.get(c);
+            List<DeepLTranslator.Item> items = chunk.stream()
+                    .map(s -> new DeepLTranslator.Item(String.valueOf(s.getId()), s.getSrcText(), EmptyMarkers.isEmpty(s.getEnText()) ? null : s.getEnText()))
+                    .toList();
+            DeepLTranslator.Result r;
+            try {
+                r = translator.translate(gameId, items, sourceLang);
+            } catch (RuntimeException e) {
+                ctx.log("묶음 " + (c + 1) + "/" + chunks.size() + " 실패(" + chunk.size() + "행은 다음 실행에서 다시): " + e.getMessage());
+                ctx.progress(c + 1, chunks.size());
+                continue;
+            }
+            chars += r.sentChars();
+            failed += r.failedTexts();
+            if (r.failedTexts() > 0) ctx.log("묶음 " + (c + 1) + "/" + chunks.size() + ": DeepL이 원문 " + r.failedTexts() + "개를 거절함(다음 실행에서 다시): " + r.lastError());
+            for (Segment s : chunk) {
+                DeepLTranslator.Outcome o = r.byKey().get(String.valueOf(s.getId()));
+                if (o == null || o.ko().isBlank()) continue;
+                // DeepL을 기다리는 사이 사람이 저장했으면 덮어쓰지 않는다
+                if (revisions.current(s.getId()).isPresent()) continue;
+                revisions.add(s.getId(), o.ko(), TranslationRevision.Author.DEEPL);
+                segments.updateTermMiss(s.getId(), GlossaryCheck.format(GlossaryCheck.missing(s.getSrcText(), o.ko(), glossary)));
+                if (o.source() == DeepLTranslator.Source.CACHE) cached++; else deepl++;
+                if (o.problem() != null) { flag(s, DeepLTranslator.problemNote(o.problem())); flagged++; }
+            }
+            ctx.progress(c + 1, chunks.size());
+        }
+        ctx.log("DeepL 번역 끝: DeepL " + deepl + "행 · 캐시 " + cached + "행 · 메모리 " + fromMemory + "행 · 확인 필요 " + flagged + "행 · 보낸 글자 " + chars + "자"
+                + (failed == 0 ? "" : " · 거절 " + failed + "문장(다음 실행에서 다시)"));
+    }
+
+    /** 확인 필요를 켜고 비고에 이유를 붙인다(기존 비고는 남기고 뒤에). */
+    private void flag(Segment s, String reason) {
+        segments.updateMarks(List.of(s.getId()), null, null, true, null, null);
+        // 작업 시작 때 읽은 비고가 아니라 지금 비고 — 그 사이 검토자가 쓴 비고를 지우지 않게
+        String current = segments.findById(s.getId()).map(Segment::getNote).orElse(null);
+        String note = current == null || current.isBlank() ? reason : current + " · " + reason;
+        segments.updateNote(s.getId(), note);
     }
 
     /**
@@ -242,11 +311,11 @@ public class TranslationService {
     }
 
     public TranslateStatus status(Long projectId) {
-        long target = segments.countByProjectIdAndSkippedFalse(projectId) - segments.countByProjectIdAndIsTermTrue(projectId);
+        long target = segments.countByProjectIdAndSkippedFalse(projectId);
         long proofPending = segments.countProofPending(projectId);
         long remaining = segments.countUntranslated(projectId) + proofPending;
         JobDto latest = jobs.latest(projectId, TranslationJob.Kind.TRANSLATE).orElse(null);
         int batchSize = lastBatchSize.getOrDefault(projectId, props.translate().batchSize());
-        return new TranslateStatus(target, target - remaining, proofPending, terms.glossary(projectId).size(), batchSize, latest);
+        return new TranslateStatus(target, target - remaining, proofPending, termMiss.glossaryFor(projectId).size(), batchSize, latest);
     }
 }

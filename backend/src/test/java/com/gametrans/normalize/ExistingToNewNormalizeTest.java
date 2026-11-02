@@ -79,6 +79,40 @@ class ExistingToNewNormalizeTest extends IntegrationTest {
         }
     }
 
+    /** 내보낼 때 "기존 한국어 열에 덮어쓰기"를 고르면 새 열을 만들지 않고 D열에 쓴다. 정규화 설정은 그대로다. */
+    @Test
+    void exportCanOverwriteTheExistingKoreanColumnInstead() throws Exception {
+        long pid = normalized();
+        mvc.perform(get("/api/projects/{id}/export/preview", pid)).andExpect(jsonPath("$.canOverwrite").value(true));
+        String list = mvc.perform(get("/api/review/{id}/rows", pid).param("sheet", "Skill")).andReturn().getResponse().getContentAsString();
+        long sid = ((Number) com.jayway.jsonpath.JsonPath.parse(list).read("$.rows[0].id")).longValue();
+        mvc.perform(put("/api/segments/{id}/translation", sid).contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"정의의 판결\"}"))
+                .andExpect(status().isOk());
+
+        byte[] out = mvc.perform(post("/api/projects/{id}/export", pid).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"addFlagColumn\":false,\"addHistorySheet\":false,\"addGlossarySheet\":false,\"ratio\":1.0,\"overwriteKo\":true}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(out))) {
+            Sheet s = wb.getSheet("Skill");
+            assertThat(s.getRow(0).getCell(3).getStringCellValue()).isEqualTo("KR");   // D열 헤더는 원본 그대로
+            assertThat(s.getRow(0).getCell(4)).isNull();                                // 새 열 없음
+            assertThat(s.getRow(1).getCell(3).getStringCellValue()).isEqualTo("정의의 판결");
+        }
+        mvc.perform(get("/api/projects/{id}/normalize", pid).param("sheet", "Skill"))
+                .andExpect(jsonPath("$.configs[0].config.pairs[0].koColMode").value("EXISTING_TO_NEW"));
+    }
+
+    /** 기존 한국어 열을 읽지 않는(NEW) 설정은 덮어쓸 곳이 없다. */
+    @Test
+    void previewSaysOverwriteIsUnavailableWithoutAnExistingKoreanColumn() throws Exception {
+        long pid = TestProjects.uploadExistingKo(mvc);
+        mvc.perform(put("/api/projects/{id}/normalize", pid).contentType(MediaType.APPLICATION_JSON).content("""
+                {"sheetName":"Skill","headerRow":1,"keyCol":"A","pairs":[{"srcCol":"B","enCol":"C","koColMode":"NEW","koHeader":"KR_Fix"}]}
+                """)).andExpect(status().isOk());
+        mvc.perform(get("/api/projects/{id}/export/preview", pid)).andExpect(jsonPath("$.canOverwrite").value(false));
+    }
+
     @Test
     void rejectsMissingKoColumnAndDuplicateNewHeaders() throws Exception {
         long pid = TestProjects.uploadExistingKo(mvc);

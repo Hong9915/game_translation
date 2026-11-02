@@ -135,4 +135,24 @@ class ProjectControllerTest extends IntegrationTest {
         mvc.perform(put("/api/projects/{id}/normalize", other).contentType(MediaType.APPLICATION_JSON).content(TestProjects.EXISTING_KO_NORMALIZE)).andExpect(status().isOk());
         mvc.perform(get("/api/projects/{id}", other)).andExpect(jsonPath("$.currentStep").value(3));
     }
+
+    /** 게임 화면 파일 목록의 "최종 리뷰" 배지(설계 2026-10-17): 수정 한국어 열로 정규화한 시트가 있는 파일만. */
+    @Test
+    void listMarksFilesNormalizedAsFinalReview() throws Exception {
+        String game = TestProjects.freshGame();
+        long normal = TestProjects.uploadExistingKo(mvc, game);
+        mvc.perform(put("/api/projects/{id}/normalize", normal).contentType(MediaType.APPLICATION_JSON).content(TestProjects.EXISTING_KO_NORMALIZE))
+                .andExpect(status().isOk());
+        long fin = TestProjects.uploadExistingKoAsFinal(mvc, game);
+        mvc.perform(put("/api/projects/{id}/normalize", fin).contentType(MediaType.APPLICATION_JSON).content(TestProjects.FINAL_SKILL_NORMALIZE))
+                .andExpect(status().isOk());
+        long untouched = TestProjects.uploadExistingKoAsFinal(mvc, game);   // 정규화 전
+        long gameId = ((Number) JsonPath.parse(mvc.perform(get("/api/projects/{id}", fin)).andReturn().getResponse().getContentAsString())
+                .read("$.gameId")).longValue();
+        String body = mvc.perform(get("/api/projects").param("gameId", String.valueOf(gameId))).andReturn().getResponse().getContentAsString();
+        assertThat(JsonPath.parse(body).<java.util.List<Boolean>>read("$[?(@.id == " + fin + ")].finalReview")).containsExactly(true);
+        assertThat(JsonPath.parse(body).<java.util.List<Boolean>>read("$[?(@.id == " + normal + ")].finalReview")).containsExactly(false);
+        assertThat(JsonPath.parse(body).<java.util.List<Boolean>>read("$[?(@.id == " + untouched + ")].finalReview")).containsExactly(false);
+        mvc.perform(get("/api/projects/{id}", fin)).andExpect(jsonPath("$.finalReview").value(true));
+    }
 }

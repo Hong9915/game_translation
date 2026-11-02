@@ -17,7 +17,7 @@ public final class ActivityDtos {
 
     /** sheet: 작업류는 detail.sheet, EDIT·RETRANSLATE는 대표 행의 시트, 나머지 null. primary: EDIT·RETRANSLATE만. */
     public record FeedItem(Long id, String kind, ReviewerRef reviewer, Instant createdAt, long rowCount, String sheet, RowItem primary,
-                           Map<String, Object> detail) {}
+                           Map<String, Object> detail, Long projectId) {}
 
     public record FeedResponse(List<FeedItem> items, @JsonInclude(JsonInclude.Include.NON_NULL) Long nextBefore) {}
 

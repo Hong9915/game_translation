@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
+import type { ReviewTarget } from '../../lib/reviewTarget'
 import type { JosaKind } from '../../api/types'
 import { Anchored } from '../ui/Anchored'
 
@@ -13,20 +14,19 @@ const KINDS: { kind: JosaKind; label: string; note?: string }[] = [
 export interface JosaApplyDialogProps {
   x: number
   y: number
-  projectId: number
-  sheet: string
+  target: ReviewTarget
   onDone: (r: { changed: number; skipped: number }) => void
   onClose: () => void
 }
 
 /** 조사 확인 필터의 "모두 적용" 확인 창(설계 2026-10-07 §6). 판정이 확실한 한글 뒤·숫자 뒤만 기본으로 켠다. */
-export function JosaApplyDialog({ x, y, projectId, sheet, onDone, onClose }: JosaApplyDialogProps) {
+export function JosaApplyDialog({ x, y, target, onDone, onClose }: JosaApplyDialogProps) {
   const ref = useRef<HTMLDivElement>(null)
   const [on, setOn] = useState<Record<JosaKind, boolean>>({ HANGUL: true, NUMBER: true, TAG: false })
-  const preview = useQuery({ queryKey: ['josa-preview', projectId, sheet], queryFn: () => api.workspace.josaPreview(projectId, sheet) })
+  const preview = useQuery({ queryKey: ['josa-preview', target], queryFn: () => api.review(target).josaPreview() })
   const kinds = KINDS.filter((k) => on[k.kind]).map((k) => k.kind)
   const total = kinds.reduce((n, k) => n + (preview.data?.counts[k] ?? 0), 0)
-  const apply = useMutation({ mutationFn: () => api.workspace.josaApply(projectId, { sheet, kinds }), onSuccess: (r) => onDone(r) })
+  const apply = useMutation({ mutationFn: () => api.review(target).josaApply({ kinds }), onSuccess: (r) => onDone(r) })
 
   useEffect(() => {
     const onDown = (e: globalThis.MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose() }

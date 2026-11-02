@@ -1,5 +1,5 @@
-/** 그리드 열 순서. 글을 편집하는 열은 fix·note, 체크 열(review1·review2·needsCheck·confirmed)은 클릭·Space로 바꾼다. */
-export const COLS = ['idx', 'id', 'src', 'en', 'existingKo', 'fix', 'review1', 'review2', 'needsCheck', 'confirmed', 'note'] as const
+/** 그리드 열 순서. 글을 편집하는 열은 fix·note, 체크 열(review1·review2·needsCheck·confirmed·finalMark)은 클릭·Space로 바꾼다. finalMark는 최종 리뷰 시트에서만 보인다. */
+export const COLS = ['idx', 'id', 'src', 'en', 'existingKo', 'fix', 'review1', 'review2', 'needsCheck', 'confirmed', 'finalMark', 'note'] as const
 export type Col = (typeof COLS)[number]
 export interface Cell { row: number; col: Col }
 export type ArrowKey = 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight'

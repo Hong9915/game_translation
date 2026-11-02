@@ -55,7 +55,7 @@ public final class TestWorkbooks {
             String[][] rows = {
                 {"技能编号", "技能名称_CN", "技能名称_EN", "技能名称_KR", "技能说明_CN", "技能说明_EN", "技能说明_KR"},
                 {"211011101", "正义裁决", "Rule of Law", "정의의 심판", "解放圣剑的力量", "Unleash the holy sword", ""},
-                {"211011001", "厄隆迪尔普攻", "N/A", "N/A", "对当前目标造成伤害", "N/A", "N/A"},
+                {"211011001", "无", "N/A", "N/A", "无", "N/A", "N/A"},
                 {"211011102", "专属天赋", "Exclusive Talent", "", "伤害减免提升至@10%@", "DMG Reduction increased to @10%@", "N/A"},
             };
             for (int r = 0; r < rows.length; r++) {
@@ -155,7 +155,7 @@ public final class TestWorkbooks {
     }
 
     /**
-     * 이미 한국어 열이 있는 교정용 시트. 2행: 번역 있음, 3행: EN·KR 모두 N/A(의도적 미번역),
+     * 이미 한국어 열이 있는 교정용 시트. 2행: 번역 있음, 3행: 원문 无·EN·KR 모두 N/A(안 쓰는 행),
      * 4행: KR만 N/A, 5행: KR 빈칸, 6행: 원문이 none, 7행: KR이 None.
      */
     public static byte[] withExistingKo() {
@@ -164,7 +164,7 @@ public final class TestWorkbooks {
             String[][] rows = {
                 {"SkillID", "CN", "EN", "KR"},
                 {"211011101", "正义裁决", "Rule of Law", "정의의 심판"},
-                {"211011001", "对当前目标造成伤害", "N/A", "N/A"},
+                {"211011001", "无", "N/A", "N/A"},
                 {"211011102", "伤害减免提升至@10%@", "DMG Reduction increased to @10%@", "N/A"},
                 {"211011103", "技能伤害提升至@420%@", "", ""},
                 {"211011104", "none", "", "None"},
@@ -174,6 +174,19 @@ public final class TestWorkbooks {
                 Row row = s.createRow(r);
                 for (int c = 0; c < rows[r].length; c++) row.createCell(c).setCellValue(rows[r][c]);
             }
+            wb.write(out);
+            return out.toByteArray();
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
+    /** withExistingKo()와 열 배치가 같다. 원문은 있는데 영어·한국어가 None·N/A — 아직 안 채운 칸이라 번역해야 한다(CardRepository 称号). */
+    public static byte[] untranslatedNaRows() {
+        try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            write(wb.createSheet("Skill"), new String[][]{
+                {"SkillID", "CN", "EN", "KR"},
+                {"50100023", "风暴女王", "None", "None"},
+                {"50100024", "对当前目标造成伤害", "N/A", "N/A"},
+            });
             wb.write(out);
             return out.toByteArray();
         } catch (IOException e) { throw new UncheckedIOException(e); }
@@ -263,6 +276,19 @@ public final class TestWorkbooks {
         } catch (IOException e) { throw new UncheckedIOException(e); }
     }
 
+    /** 1글자 원문(WHOLE) 시험용. 801은 원문이 金 하나뿐인 행, 802는 金이 다른 낱말 속에 든 행(건드리면 안 된다). */
+    public static byte[] wholeTermRows() {
+        try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            write(wb.createSheet("Skill"), new String[][]{
+                {"ID", "CN", "EN", "KR"},
+                {"801", "金", "Gold", "금화"},
+                {"802", "金币商店", "Coin shop", "금화 상점"},
+            });
+            wb.write(out);
+            return out.toByteArray();
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
     /** 교정용: 한국어가 거의 다 차 있고 일부만 틀렸다. 2행 정상, 3행 오역, 4행 자리표시자 있음, 5행 빈칸. */
     public static byte[] proofread() {
         try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -281,5 +307,76 @@ public final class TestWorkbooks {
             wb.write(out);
             return out.toByteArray();
         } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
+    /** 최종 리뷰 파일: 원문(B)·기존 한국어(C)·이미 고친 한국어(D, KR_Fix). 같음 · 고침 · 기존 없이 고침 · 고친 칸 빔 · 둘 다 빔. */
+    public static byte[] finalReview() {
+        try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet s = wb.createSheet("Sheet1");
+            String[][] rows = {
+                {"file_name", "Chinese String", "Korean String", "KR_Fix"},
+                {"Login.ts", "是否退出游戏?", "게임을 종료하시겠습니까?", "게임을 종료하시겠습니까?"},
+                {"Hero.ts", "属性", "재산", "속성"},
+                {"Bag.ts", "分解成功", "", "분해 성공"},
+                {"Bag.ts", "出售", "판매", ""},
+                {"Bag.ts", "合成", "", ""},
+            };
+            for (int r = 0; r < rows.length; r++) {
+                Row row = s.createRow(r);
+                for (int c = 0; c < rows[r].length; c++) row.createCell(c).setCellValue(rows[r][c]);
+            }
+            wb.write(out);
+            return out.toByteArray();
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
+    /** withExistingKo()와 같은 Skill 시트에 E열 KR_Fix를 더한 최종 리뷰 파일. 2행만 고쳐져 있다. */
+    public static byte[] existingKoAsFinal() {
+        try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet s = wb.createSheet("Skill");
+            String[][] rows = {
+                {"SkillID", "CN", "EN", "KR", "KR_Fix"},
+                {"211011101", "正义裁决", "Rule of Law", "정의의 심판", "정의의 판결"},
+                {"211011106", "攻击", "Attack", "공격", "공격"},
+            };
+            for (int r = 0; r < rows.length; r++) {
+                Row row = s.createRow(r);
+                for (int c = 0; c < rows[r].length; c++) row.createCell(c).setCellValue(rows[r][c]);
+            }
+            wb.write(out);
+            return out.toByteArray();
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
+    private static final String[] FORM_HEADERS = {"角色", "道具", "技能", "地点", "怪物", "货币", "其他"};
+    private static final String[] FORM_EXAMPLE = {"森之召唤师", "火焰之剑", "雷霆一击", "迷雾森林", "暗影狼王", "钻石", "公会"};
+
+    /** 단어장 요청양식(术语表 시트)과 같은 모양: 1행 안내, 2행 머리글, 3행 "例：", 4행 예시(+H4 "← 示例"), 5행부터 입력. */
+    public static byte[] termRequestForm(String[][] rowsFrom5) {
+        return termRequestForm(FORM_EXAMPLE, rowsFrom5);
+    }
+
+    /** row4가 양식의 예시 줄을 대신한다. 각 행은 角色..其他 7칸이고 null/""은 빈칸. */
+    public static byte[] termRequestForm(String[] row4, String[][] rowsFrom5) {
+        try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet s = wb.createSheet("术语表");
+            s.createRow(0).createCell(0).setCellValue("【填写说明】请将游戏中的专有名词按类别填入下方对应列。第4行灰色为示例，可删除或覆盖。");
+            formRow(s, 1, FORM_HEADERS);
+            String[] desc = new String[7];
+            for (int i = 0; i < 7; i++) desc[i] = "例：" + FORM_HEADERS[i];
+            formRow(s, 2, desc);
+            formRow(s, 3, row4);
+            s.getRow(3).createCell(7).setCellValue("← 示例");
+            for (int r = 0; r < rowsFrom5.length; r++) formRow(s, 4 + r, rowsFrom5[r]);
+            wb.write(out);
+            return out.toByteArray();
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
+    private static void formRow(Sheet s, int rowIdx, String[] cells) {
+        Row row = s.createRow(rowIdx);
+        for (int c = 0; c < cells.length; c++) {
+            if (cells[c] != null && !cells[c].isEmpty()) row.createCell(c).setCellValue(cells[c]);
+        }
     }
 }

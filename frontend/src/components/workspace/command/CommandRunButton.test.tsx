@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { CommandRun } from './commandRuns'
 import { CommandRunButton, CommandRunNotice } from './CommandRunButton'
 
-const run = (patch: Partial<CommandRun>): CommandRun => ({ id: 1, sheet: 'Skill', ask: { command: 'x' }, status: 'running', seen: false, ...patch })
+const run = (patch: Partial<CommandRun>): CommandRun => ({ id: 1, sheet: 'Skill', target: { kind: 'project', projectId: 7, sheet: 'Skill' }, ask: { command: 'x' }, status: 'running', seen: false, ...patch })
 
 describe('CommandRunButton', () => {
   it('실행 없음 → 평소 이름, 누르면 지금 시트로 연다', async () => {

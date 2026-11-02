@@ -13,6 +13,8 @@ public class JobEventBus {
     private final Map<Long, CopyOnWriteArrayList<SseEmitter>> subscribers = new ConcurrentHashMap<>();
     /** 프로젝트 단위 구독자: 어느 화면에 있든 그 프로젝트의 모든 작업 이벤트를 받는다. */
     private final Map<Long, CopyOnWriteArrayList<SseEmitter>> projectSubscribers = new ConcurrentHashMap<>();
+    /** 게임 단위 구독자(게임 전체 리뷰 화면): 그 게임 모든 파일의 공동 검토 이벤트를 받는다. */
+    private final Map<Long, CopyOnWriteArrayList<SseEmitter>> gameSubscribers = new ConcurrentHashMap<>();
 
     public SseEmitter subscribe(Long jobId) {
         SseEmitter emitter = new SseEmitter(30L * 60 * 1000);
@@ -46,6 +48,25 @@ public class JobEventBus {
     /** 프로젝트 스트림에 activity 말고 다른 이름의 이벤트를 보낸다(공동 검토의 "review"). */
     public void publishProjectEvent(Long projectId, String event, Object data) {
         send(projectSubscribers.get(projectId), event, data);
+    }
+
+    public SseEmitter subscribeGame(Long gameId) {
+        SseEmitter emitter = new SseEmitter(30L * 60 * 1000);
+        List<SseEmitter> list = gameSubscribers.computeIfAbsent(gameId, k -> new CopyOnWriteArrayList<>());
+        list.add(emitter);
+        emitter.onCompletion(() -> list.remove(emitter));
+        emitter.onTimeout(() -> list.remove(emitter));
+        emitter.onError(e -> list.remove(emitter));
+        return emitter;
+    }
+
+    public void publishGameEvent(Long gameId, String event, Object data) {
+        send(gameSubscribers.get(gameId), event, data);
+    }
+
+    /** 게임 스트림에 구독자가 있는지(없으면 게임 id를 찾는 수고도 건너뛴다). */
+    public boolean hasGameSubscribers() {
+        return gameSubscribers.values().stream().anyMatch(l -> !l.isEmpty());
     }
 
     /** 프로젝트 스트림 구독자를 모두 닫는다(테스트·서버 종료용). */

@@ -13,7 +13,6 @@ const CAN: { what: string; example: string }[] = [
 
 const CANNOT: { what: string; instead: string }[] = [
   { what: '뜻을 보고 다듬기 · 다시 번역', instead: '셀 우클릭 → GPT 번역' },
-  { what: '길이 줄이기', instead: '셀 우클릭 → 짧게 줄이기' },
   { what: '게임의 모든 파일에 한 번에', instead: '단어장' },
   { what: '새 태그 끼워 넣기 (\\n → <br>)', instead: '아직 안 됨 — 셀에서 직접' },
 ]
@@ -42,6 +41,10 @@ export function CommandGuide({ onPick }: { onPick: (example: string) => void }) 
           <li className="flex items-baseline gap-3">
             <span className="w-28 shrink-0 text-ink">조사 · 태그 · 통일</span>
             <span className="text-muted">위 버튼 4개는 GPT 없이 바로 돌아갑니다</span>
+          </li>
+          <li className="flex items-baseline gap-3">
+            <span className="w-28 shrink-0 text-ink">전체 길이 줄이기</span>
+            <span className="text-muted">길이 기준을 넘는 행을 모두 GPT로 줄여 글자 수와 함께 비교합니다</span>
           </li>
         </ul>
       </div>

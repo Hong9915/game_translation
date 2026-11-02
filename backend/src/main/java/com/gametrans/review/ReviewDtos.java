@@ -19,7 +19,7 @@ public final class ReviewDtos {
     }
     /** lastEditor: 현재 판을 사람이 남겼을 때 그 검토자. assignee: 담당자(없으면 미배정). */
     /** existingKo: 올린 파일의 기존 한국어 원래 셀 값(없으면 null). 내보내기가 달라진 칸을 고를 때 currentText와 비교한다. */
-    public record SegmentRow(Long id, String indexLabel, int pairIndex, String srcText, String enText, boolean isTerm, String currentText,
+    public record SegmentRow(Long id, String indexLabel, int pairIndex, String srcText, String enText, String currentText,
                              String existingKo, int lenKo, int lenSrc, boolean flagged, List<String> termMiss, String proofNote, List<RevisionDto> history,
                              String sheetName, int rowNo, ReviewerRef assignee, boolean done, ReviewerRef lastEditor, Instant lastEditedAt,
                              boolean proofPending) {}

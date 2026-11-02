@@ -11,7 +11,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import({FakeLlmConfig.class, FakeJosaConfig.class})
+@Import({FakeLlmConfig.class, FakeJosaConfig.class, FakeMtConfig.class})
 public abstract class IntegrationTest {
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
 

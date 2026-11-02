@@ -49,6 +49,13 @@ public final class Pipeline {
             OpSpec op = ops.get(i);
             if (op == null || op.kind() == null || !OpSpec.KINDS.contains(op.kind()))
                 throw new IllegalArgumentException("모르는 작업입니다: " + (op == null ? null : op.kind()));
+            if (OpSpec.SHORTEN.equals(op.kind()) && ops.size() > 1)
+                throw new IllegalArgumentException("길이 줄이기는 다른 작업과 함께 쓸 수 없습니다.");
+            if (OpSpec.TERM.equals(op.kind())) {
+                if (ops.size() > 1) throw new IllegalArgumentException("용어 바꾸기는 다른 작업과 함께 쓸 수 없습니다.");
+                if (op.src() == null || op.src().isBlank() || op.ko() == null || op.ko().isBlank())
+                    throw new IllegalArgumentException("용어 바꾸기에는 원문 용어(src)와 바꿀 한국어(ko)가 있어야 합니다.");
+            }
             if (OpSpec.UNIFY_SAME_SOURCE.equals(op.kind()) && i > 0)
                 throw new IllegalArgumentException("같은 원문 통일은 맨 앞에만 둘 수 있습니다.");
             rules.add(OpSpec.REPLACE.equals(op.kind()) ? CommandRule.compile(op.filter(), op.steps()) : null);
@@ -58,6 +65,12 @@ public final class Pipeline {
 
     public List<OpSpec> ops() { return ops; }
 
+    /** 길이 줄이기 목록인가 — 그러면 run 대신 BulkShorten이 돌린다. */
+    public boolean shorten() { return OpSpec.SHORTEN.equals(ops.get(0).kind()); }
+
+    /** 원문 용어 바꾸기 목록인가 — 그러면 run 대신 TermSwap이 돌린다. 있으면 그 작업, 없으면 null. */
+    public OpSpec term() { return OpSpec.TERM.equals(ops.get(0).kind()) ? ops.get(0) : null; }
+
     /** only가 있으면 그 행만 후보로 본다(저장 때 다시 계산). 같은 원문 통일의 목표는 언제나 rows 전체로 정한다. */
     public List<Change> run(List<SheetRow> rows, Set<Long> only, Sidecar sidecar) {
         return run(rows, only, sidecar, true);
@@ -65,6 +78,8 @@ public final class Pipeline {
 
     /** warn이 거짓이면 경고(조사·태그 짝)를 셈하지 않는다 — 저장 때 다시 계산할 때는 after만 본다. */
     public List<Change> run(List<SheetRow> rows, Set<Long> only, Sidecar sidecar, boolean warn) {
+        if (shorten()) throw new IllegalStateException("길이 줄이기는 BulkShorten으로 돌린다");
+        if (term() != null) throw new IllegalStateException("용어 바꾸기는 TermSwap으로 돌린다");
         List<SheetRow> targets = rows.stream().filter(r -> !r.confirmed() && (only == null || only.contains(r.id()))).toList();
         Map<Long, String> cur = new LinkedHashMap<>();
         Map<Long, List<String>> by = new HashMap<>();

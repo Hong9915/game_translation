@@ -4,12 +4,20 @@ import { ApiError, api } from '../../api/client'
 import { ACTIVITY_KIND_LABEL, GLOSSARY_ACTION_LABEL, type ActivityFeedItem, type ActivityRowItem } from '../../api/types'
 import { relativeTime } from '../../lib/relativeTime'
 
+/** 게임 전체 리뷰 화면(설계 2026-10-12): 범위에 든 파일들 + 게임 단위 항목을 보이고, 어느 파일 행이든 점프한다. */
+export interface ActivityGameScope { gameId: number; sheetIds: number[]; fileNames: Record<number, string> }
+
 export interface ActivityPanelProps {
-  projectId: number
+  /** 파일 화면의 프로젝트. 게임 화면이면 game을 대신 준다. */
+  projectId?: number
+  game?: ActivityGameScope
   onClose: () => void
-  /** 항목·펼친 행을 누르면 그 시트의 순번(전체 보기 0-기반)으로 간다. */
-  onJump: (sheet: string, ordinal: number) => void
+  /** 항목·펼친 행을 누르면 그 시트의 순번(전체 보기 0-기반)으로 간다. 게임 화면이면 그 행의 파일도 준다. */
+  onJump: (sheet: string, ordinal: number, projectId?: number) => void
 }
+
+/** 패널 안에서 같이 쓰는 화면 정보. key는 이 화면의 캐시 키(['activity', key], ['workspace-rows', key]). */
+interface Ctx { projectId?: number; game?: ActivityGameScope; key: number | string; onJump: ActivityPanelProps['onJump'] }
 
 const ROWS_PAGE = 20
 const JOB_KINDS = new Set(['FIX_TERMS', 'SHORTEN', 'GLOSSARY_APPLY', 'REVERT', 'JOSA_FIX', 'TAG_SPACING', 'COMMAND_FIX'])
@@ -18,10 +26,12 @@ const REVERTIBLE = new Set(['EDIT', 'RETRANSLATE', 'FIX_TERMS', 'SHORTEN', 'GLOS
 const GLOSSARY_APPLY_NOTE = '단어장 항목은 그대로 남아 다음 일괄 적용 때 다시 바뀝니다. 항목을 고치거나 지우려면 단어장에서 하세요.'
 
 /** 검수 워크스페이스 오른쪽 변경 내역 패널(설계 2026-09-30 §4). 단어장 패널과 같은 자리·같은 폭. */
-export default function ActivityPanel({ projectId, onClose, onJump }: ActivityPanelProps) {
+export default function ActivityPanel({ projectId, game, onClose, onJump }: ActivityPanelProps) {
+  const key = game ? `g${game.gameId}` : projectId ?? 0
+  const ctx: Ctx = { projectId, game, key, onJump }
   const feed = useInfiniteQuery({
-    queryKey: ['activity', projectId],
-    queryFn: ({ pageParam }) => api.activity.feed(projectId, pageParam),
+    queryKey: game ? ['activity', key, game.sheetIds] : ['activity', key],
+    queryFn: ({ pageParam }) => (game ? api.activity.gameFeed(game.gameId, game.sheetIds, pageParam) : api.activity.feed(projectId ?? 0, pageParam)),
     initialPageParam: undefined as number | undefined,
     getNextPageParam: (last) => last.nextBefore,
   })
@@ -38,7 +48,7 @@ export default function ActivityPanel({ projectId, onClose, onJump }: ActivityPa
         {feed.isError && <p role="alert" className="px-4 py-3 text-[13px] text-orange">변경 내역을 불러오지 못했습니다.</p>}
         {feed.isSuccess && items.length === 0 && <p className="px-4 py-3 text-[13px] text-muted">아직 변경 내역이 없습니다.</p>}
         <ul>
-          {items.map((it) => <Item key={it.id} item={it} projectId={projectId} onJump={onJump} />)}
+          {items.map((it) => <Item key={it.id} item={it} ctx={ctx} />)}
         </ul>
         {feed.hasNextPage && (
           <div className="px-4 py-3">
@@ -51,7 +61,7 @@ export default function ActivityPanel({ projectId, onClose, onJump }: ActivityPa
   )
 }
 
-function Item({ item, projectId, onJump }: { item: ActivityFeedItem; projectId: number; onJump: ActivityPanelProps['onJump'] }) {
+function Item({ item, ctx }: { item: ActivityFeedItem; ctx: Ctx }) {
   const [open, setOpen] = useState(false)
   const isEdit = item.kind === 'EDIT' || item.kind === 'RETRANSLATE'
   // EDIT의 "함께 바뀐 행"은 대표 행을 뺀 수. 대표 행이 없으면(같은 값 저장) 전부가 따라 바뀐 행이다.
@@ -72,7 +82,7 @@ function Item({ item, projectId, onJump }: { item: ActivityFeedItem; projectId: 
         <div className="mt-1">
           {item.primary && (
             <>
-              <RowLink row={item.primary} projectId={projectId} onJump={onJump} />
+              <RowLink row={item.primary} ctx={ctx} />
               <BeforeAfter before={item.primary.before} after={item.primary.after} />
             </>
           )}
@@ -88,11 +98,11 @@ function Item({ item, projectId, onJump }: { item: ActivityFeedItem; projectId: 
         item.rowCount === 0
           ? <p className="mt-1 text-[13px] text-muted">바뀐 행 없음</p>
           : <button type="button" onClick={() => setOpen((v) => !v)} className="press mt-1 text-[13px] text-ink hover:underline">
-              {`${item.sheet ? `${item.sheet} · ` : ''}${item.rowCount.toLocaleString()}행`}
+              {`${ctx.game && item.projectId ? `${ctx.game.fileNames[item.projectId] ?? ''} · ` : ''}${item.sheet ? `${item.sheet} · ` : ''}${item.rowCount.toLocaleString()}행`}
             </button>
       )}
-      {open && <Rows activityId={item.id} projectId={projectId} onJump={onJump} />}
-      {REVERTIBLE.has(item.kind) && item.rowCount > 0 && <Revert item={item} projectId={projectId} />}
+      {open && <Rows activityId={item.id} ctx={ctx} />}
+      {REVERTIBLE.has(item.kind) && item.rowCount > 0 && <Revert item={item} cacheKey={ctx.key} />}
     </li>
   )
 }
@@ -101,7 +111,7 @@ function Item({ item, projectId, onJump }: { item: ActivityFeedItem; projectId: 
  * 되돌리기(2026-09-30 사용자 결정): 그 항목이 건드린 행만 이전 본문으로, 전파 없이. 그 사이 바뀐 행·확정 행·첫 판 행은 서버가 건너뛴다.
  * 버튼 → 같은 자리 확인 → 결과 문구. 피드 갱신은 서버의 refresh 이벤트가 하지만, 이벤트가 늦어도 바로 보이게 여기서도 무효화한다.
  */
-function Revert({ item, projectId }: { item: ActivityFeedItem; projectId: number }) {
+function Revert({ item, cacheKey }: { item: ActivityFeedItem; cacheKey: number | string }) {
   const qc = useQueryClient()
   const [confirming, setConfirming] = useState(false)
   const [result, setResult] = useState<string | null>(null)
@@ -109,8 +119,8 @@ function Revert({ item, projectId }: { item: ActivityFeedItem; projectId: number
     mutationFn: () => api.activity.revert(item.id),
     onSuccess: (r) => {
       setResult(`${r.reverted}행 되돌림${r.skipped > 0 ? ` · ${r.skipped}행 건너뜀` : ''}`)
-      qc.invalidateQueries({ queryKey: ['activity', projectId] })
-      qc.invalidateQueries({ queryKey: ['workspace-rows', projectId] })
+      qc.invalidateQueries({ queryKey: ['activity', cacheKey] })
+      qc.invalidateQueries({ queryKey: ['workspace-rows', cacheKey] })
     },
     onError: (e) => setResult(e instanceof ApiError ? e.message : '되돌리지 못했습니다.'),
     onSettled: () => setConfirming(false),
@@ -148,11 +158,21 @@ function GlossaryLine({ item }: { item: ActivityFeedItem }) {
   )
 }
 
-/** 같은 원문 전파는 게임의 다른 파일 행도 바꾼다 — 그 행은 이 화면에 없으므로 점프 없이 표시만 한다. */
-function RowLink({ row, projectId, onJump }: { row: ActivityRowItem; projectId: number; onJump: ActivityPanelProps['onJump'] }) {
-  if (row.projectId !== projectId) return <span className="text-[13px] text-muted">{`다른 파일 · ${row.sheet} ${row.rowNo}행`}</span>
+/**
+ * 같은 원문 전파는 게임의 다른 파일 행도 바꾼다 — 파일 화면에서는 그 행이 없으므로 점프 없이 표시만 한다.
+ * 게임 화면은 게임의 어느 파일 행이든 간다(파일 이름을 앞에 붙인다).
+ */
+function RowLink({ row, ctx }: { row: ActivityRowItem; ctx: Ctx }) {
+  if (ctx.game) {
+    return (
+      <button type="button" onClick={() => ctx.onJump(row.sheet, row.ordinal, row.projectId)} className="press text-left text-[13px] font-medium text-primary hover:underline">
+        {`${ctx.game.fileNames[row.projectId] ?? '다른 파일'} · ${row.sheet} ${row.rowNo}행`}
+      </button>
+    )
+  }
+  if (row.projectId !== ctx.projectId) return <span className="text-[13px] text-muted">{`다른 파일 · ${row.sheet} ${row.rowNo}행`}</span>
   return (
-    <button type="button" onClick={() => onJump(row.sheet, row.ordinal)} className="press text-[13px] font-medium text-primary hover:underline">
+    <button type="button" onClick={() => ctx.onJump(row.sheet, row.ordinal)} className="press text-[13px] font-medium text-primary hover:underline">
       {`${row.sheet} ${row.rowNo}행`}
     </button>
   )
@@ -169,7 +189,7 @@ function BeforeAfter({ before, after }: { before: string | null; after: string }
 }
 
 /** 펼친 행 목록. 20행씩 이어 읽는다(설계 §3.2). */
-function Rows({ activityId, projectId, onJump }: { activityId: number; projectId: number; onJump: ActivityPanelProps['onJump'] }) {
+function Rows({ activityId, ctx }: { activityId: number; ctx: Ctx }) {
   const pages = useInfiniteQuery({
     queryKey: ['activity-rows', activityId],
     queryFn: ({ pageParam }) => api.activity.rows(activityId, pageParam, ROWS_PAGE),
@@ -185,7 +205,7 @@ function Rows({ activityId, projectId, onJump }: { activityId: number; projectId
       <ul className="space-y-1.5">
         {rows.map((r) => (
           <li key={r.segmentId}>
-            <RowLink row={r} projectId={projectId} onJump={onJump} />
+            <RowLink row={r} ctx={ctx} />
             <BeforeAfter before={r.before} after={r.after} />
           </li>
         ))}

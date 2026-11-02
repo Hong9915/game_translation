@@ -5,10 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.gametrans.glossary.GlossaryDtos.Recommendation;
 import com.gametrans.glossary.GlossaryDtos.Rendering;
 import com.gametrans.glossary.GlossarySuggester.Row;
-import com.gametrans.term.CandidateMiner;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -18,7 +16,7 @@ class GlossaryRecommenderTest {
             new Row("领取礼包", "패키지 수령"), new Row("超值礼包", "초특가 패키지"), new Row("礼包已售罄", "패키지 매진"),
             new Row("每日礼包", "일일 패키지"), new Row("新手礼包", "초보자 패키지"));
 
-    private static List<Recommendation> recommend(List<Row> rows) { return GlossaryRecommender.recommend(miner, rows, Set.of(), Map.of()); }
+    private static List<Recommendation> recommend(List<Row> rows) { return GlossaryRecommender.recommend(miner, rows, Set.of()); }
 
     @Test
     void ranksPhrasesByHowManyDistinctSentencesContainThem() {
@@ -54,7 +52,7 @@ class GlossaryRecommenderTest {
 
     @Test
     void leavesOutPhrasesAlreadyInTheGlossary() {
-        assertThat(GlossaryRecommender.recommend(miner, PACKS, Set.of("礼包"), Map.of())).isEmpty();
+        assertThat(GlossaryRecommender.recommend(miner, PACKS, Set.of("礼包"))).isEmpty();
     }
 
     @Test
@@ -62,13 +60,6 @@ class GlossaryRecommenderTest {
         List<Row> rows = List.of(new Row("对目标造成伤害", "대상에게 피해"), new Row("目标造成眩晕", "대상에게 기절"), new Row("向目标造成灼烧", "대상에게 화상"),
                 new Row("使目标造成混乱", "대상에게 혼란"), new Row("目标造成减速", "대상에게 감속"));
         assertThat(recommend(rows)).extracting(Recommendation::find).containsExactlyInAnyOrder("目标", "造成");
-    }
-
-    @Test
-    void carriesTheOldPipelineTermTranslationWhenThereIsOne() {
-        List<Recommendation> out = GlossaryRecommender.recommend(miner, PACKS, Set.of(), Map.of("礼包", "선물 꾸러미"));
-        assertThat(out.get(0).termKo()).isEqualTo("선물 꾸러미");
-        assertThat(recommend(PACKS).get(0).termKo()).isNull();
     }
 
     @Test

@@ -1,7 +1,7 @@
 import type { CommandStep, OpSpec } from '../../../api/types'
 
 const NUM = ['①', '②', '③', '④', '⑤', '⑥']
-const NAME: Record<OpSpec['kind'], string> = { REPLACE: '찾아 바꾸기', TAG_SPACING: '태그 띄어쓰기', JOSA: '조사 맞추기', UNIFY_SAME_SOURCE: '같은 원문 통일' }
+const NAME: Record<OpSpec['kind'], string> = { REPLACE: '찾아 바꾸기', TAG_SPACING: '태그 띄어쓰기', JOSA: '조사 맞추기', UNIFY_SAME_SOURCE: '같은 원문 통일', SHORTEN: '길이 줄이기', TERM: '용어 바꾸기' }
 
 /** 칩 글: 찾아 바꾸기는 조건까지. */
 export function opLabel(op: OpSpec): string {

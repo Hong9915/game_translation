@@ -6,7 +6,7 @@ import { Anchored } from '../ui/Anchored'
 
 /** 사람이 남기지 않은 판의 이름. */
 const AUTHOR_LABEL: Record<RevisionAuthor, string> = {
-  HUMAN: '직접 수정', LLM: 'GPT 번역', LLM_SHORTEN: 'GPT 줄이기', LLM_PROOFREAD: 'GPT 교정', GLOSSARY: '단어장 적용', EXISTING: '기존 번역', MEMORY: '번역 메모리',
+  HUMAN: '직접 수정', LLM: 'GPT 번역', LLM_SHORTEN: 'GPT 줄이기', LLM_PROOFREAD: 'GPT 교정', DEEPL: 'DeepL 번역', GLOSSARY: '단어장 적용', EXISTING: '기존 번역', MEMORY: '번역 메모리', IMPORTED: '최종 리뷰 수정본',
 }
 
 export interface RowHistoryPopoverProps {

@@ -40,13 +40,6 @@ public final class GlossaryPrompt {
         return out;
     }
 
-    /** 구 용어와 단어장을 합친다. 같은 원문이면 단어장이 이긴다. */
-    public static Map<String, String> merge(Map<String, String> oldTerms, Map<String, String> glossary) {
-        Map<String, String> out = new LinkedHashMap<>(oldTerms);
-        out.putAll(glossary);
-        return out;
-    }
-
     /** 지시문 뒤에 메모를 줄바꿈으로 붙인다. 메모가 없으면 지시문 그대로. */
     public static String instructions(String base, List<String> notes) {
         if (notes == null || notes.isEmpty()) return base;

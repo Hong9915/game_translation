@@ -1,6 +1,6 @@
 #!/bin/bash
-# 최신 코드를 로컬 DB 복사본으로 띄운다: postgres 복사본 5433 · 조사 사이드카 8009 · 백엔드 8081 · 프론트 5178.
-# 로컬 compose 스택(5432·8080·5173)은 건드리지 않는다. 쓰기: ./up.sh [열 경로, 예: /review/54] [--keep-db]
+# 최신 코드를 로컬 DB 복사본으로 띄운다: postgres 복사본 5433 · 조사 사이드카 8009 · 백엔드 8081 · 프론트 5173.
+# 5173을 쓰려고 compose 프론트 컨테이너만 멈춘다(down.sh가 다시 켠다). compose postgres·백엔드(5432·8080)는 건드리지 않는다. 쓰기: ./up.sh [열 경로, 예: /review/54] [--keep-db]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 STATE="${TMPDIR:-/tmp}/gt-local-preview"
@@ -23,7 +23,17 @@ fi
 docker start game_translation-postgres-1 >/dev/null
 
 # 2. 앞서 띄운 백엔드·프론트를 끈다
-for port in 8081 5178; do lsof -ti tcp:$port -sTCP:LISTEN | xargs kill 2>/dev/null || true; done
+# 5173은 Docker가 frontend 컨테이너 포트로 쥐고 있을 수 있다 — com.docker.backend를 죽이면 Docker Desktop이 통째로 꺼지므로 건너뛴다.
+for port in 8081 5173; do for pid in $(lsof -ti tcp:$port -sTCP:LISTEN); do ps -p "$pid" -o comm= | grep -q com.docker || kill "$pid" 2>/dev/null || true; done; done
+
+# 맥에 직접 띄운 postgres가 localhost:5433을 쥐고 있으면 백엔드가 복사본 대신 그쪽에 붙는다(2026-10-19) — 멈추고 알린다.
+for pid in $(lsof -ti tcp:5433 -sTCP:LISTEN); do
+  ps -p "$pid" -o comm= | grep -q com.docker || { echo "5433을 Docker 밖 프로세스가 쓰고 있습니다: $(ps -p "$pid" -o command= | cut -c1-160)"; exit 1; }
+done
+
+# 올린 원본 파일(compose 백엔드의 backend/data)을 복사본 저장소로 — 없으면 파일 열기·내보내기가 NoSuchFile로 실패한다.
+MAIN="$(cd "$(git -C "$ROOT" rev-parse --git-common-dir)/.." && pwd)"
+rsync -a "$MAIN/backend/data/" "$STATE/storage/"
 
 # 3. DB 복사본(5433)
 if [ "$KEEP_DB" = 0 ] || ! docker ps --format '{{.Names}}' | grep -qx gt-verify-pg; then
@@ -44,17 +54,18 @@ docker run -d --name gt-verify-josa -p 8009:8000 gt-verify-josa-img >/dev/null
 OPENAI_API_KEY="$(docker exec game_translation-backend-1 printenv OPENAI_API_KEY 2>/dev/null || true)"
 DEEPL_AUTH_KEY="$(docker exec game_translation-backend-1 printenv DEEPL_AUTH_KEY 2>/dev/null || true)"
 (cd "$ROOT/backend" && OPENAI_API_KEY="$OPENAI_API_KEY" DEEPL_AUTH_KEY="$DEEPL_AUTH_KEY" \
-  SUPABASE_DB_URL=jdbc:postgresql://localhost:5433/gametrans CORS_ORIGINS=http://localhost:5178 \
+  SUPABASE_DB_URL=jdbc:postgresql://localhost:5433/gametrans CORS_ORIGINS=http://localhost:5173 \
   STORAGE_LOCAL_DIR="$STATE/storage" JOSA_URL=http://localhost:8009 \
   nohup ./gradlew bootRun --args='--server.port=8081' > "$STATE/backend.log" 2>&1 &)
 for _ in $(seq 1 120); do curl -s -o /dev/null http://localhost:8081/api/games && break; sleep 2; done
 curl -sf -o /dev/null http://localhost:8081/api/games || { echo "백엔드가 뜨지 않았습니다: $STATE/backend.log"; tail -30 "$STATE/backend.log"; exit 1; }
 
-# 6. 프론트(5178)
-(cd "$ROOT/frontend" && nohup npx vite --config vite.local-preview.config.ts > "$STATE/frontend.log" 2>&1 &)
-for _ in $(seq 1 30); do curl -s -o /dev/null http://localhost:5178/ && break; sleep 1; done
+# 6. 프론트(5173) — compose 프론트 컨테이너(옛 이미지)를 멈추고 그 자리에 vite를 띄운다
+docker stop game_translation-frontend-1 >/dev/null 2>&1 || true
+(cd "$ROOT/frontend" && VITE_API_BASE_URL=/api nohup npx vite --config vite.local-preview.config.ts > "$STATE/frontend.log" 2>&1 &)
+for _ in $(seq 1 30); do curl -s -o /dev/null http://localhost:5173/ && break; sleep 1; done
 
-URL="http://localhost:5178${OPEN_PATH}"
+URL="http://localhost:5173${OPEN_PATH}"
 open "$URL"
 echo "열림: $URL"
 echo "OpenAI 키: $([ -n "$OPENAI_API_KEY" ] && echo 있음 || echo 없음 — GPT 기능은 실패)"

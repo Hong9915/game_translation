@@ -22,7 +22,8 @@ export function usePresence(projectId: number, me: ReviewerRef | null, editingSe
   useEffect(() => { sheetRef.current = sheet })
 
   const beat = (id: number, editing: number | null, sh: string | null) => {
-    api.presence.touch(id, { sheet: sh, editingSegmentId: editing })
+    // 음수는 게임 전체 리뷰 화면(screenOf) — 접속자를 파일 화면과 따로 센다
+    (id < 0 ? api.presence.touchGame(-id, { sheet: sh, editingSegmentId: editing }) : api.presence.touch(id, { sheet: sh, editingSegmentId: editing }))
       .then((r) => snapshot.current(r.reviewers))
       .catch(() => { /* 다음 heartbeat가 다시 알린다 */ })
   }
@@ -52,7 +53,7 @@ export function usePresence(projectId: number, me: ReviewerRef | null, editingSe
   useEffect(() => {
     if (meId === null) return
     const idAtSetup = meId   // 언마운트/전환 시 그때의 나를 떠나보낸다 — 그 사이 검토자가 바뀌었어도 새 id로 나가면 안 된다.
-    const leave = () => { api.presence.leave(projectId, idAtSetup).catch(() => {}) }
+    const leave = () => { (projectId < 0 ? api.presence.leaveGame(-projectId, idAtSetup) : api.presence.leave(projectId, idAtSetup)).catch(() => {}) }
     // 탭을 닫거나 주소창으로 다른 곳에 가면 이 이펙트의 cleanup은 돌지 않는다 — DELETE에 keepalive를
     // 달아 둔 건 바로 이 경우를 위해서다. 정상 언마운트에서는 pagehide가 오지 않으므로 두 번 나가지 않는다.
     window.addEventListener('pagehide', leave)

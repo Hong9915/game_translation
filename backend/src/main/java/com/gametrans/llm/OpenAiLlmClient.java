@@ -44,32 +44,6 @@ public class OpenAiLlmClient implements LlmClient {
         this.backoffMillis = backoffMillis;
     }
 
-    @Override public List<TermExtraction> extractTerms(List<String> sourceTexts, Map<String, Integer> frequentPhrases) {
-        JsonNode items = chatJson("EXTRACT_TERMS", Prompts.EXTRACT_SYSTEM, Prompts.extractUser(sourceTexts, frequentPhrases), true);
-        List<TermExtraction> out = new ArrayList<>();
-        for (JsonNode n : items) out.add(new TermExtraction(n.path("src").asText(), n.path("type").asText("OTHER")));
-        return out;
-    }
-
-    @Override public List<CandidateSuggestion> suggestCandidates(List<TermInput> terms, java.util.Map<String, String> fixedParts) {
-        JsonNode items = chatJson("SUGGEST_CANDIDATES", Prompts.SUGGEST_SYSTEM, Prompts.suggestUser(terms, fixedParts), true);
-        List<CandidateSuggestion> out = new ArrayList<>();
-        for (JsonNode n : items) {
-            String src = n.path("src").asText();
-            List<Candidate> cands = new ArrayList<>();
-            for (JsonNode c : n.path("candidates")) cands.add(new Candidate(stripGloss(src, c.path("text").asText()), c.path("style").asText("MEANING")));
-            out.add(new CandidateSuggestion(src, cands));
-        }
-        return out;
-    }
-
-    /** 모델이 후보 뒤에 붙인 괄호 설명(만족(가득 찬 상태) → 만족)을 떼어낸다. 원문에 괄호가 있으면 그대로 둔다. */
-    static String stripGloss(String src, String text) {
-        if (src.contains("(") || src.contains("（")) return text;
-        String stripped = text.replaceAll("\\s*[(（][^()（）]*[)）]\\s*$", "").strip();
-        return stripped.isEmpty() ? text : stripped;
-    }
-
     @Override public List<TranslationResult> translateBatch(TranslateBatchRequest request) {
         return results(chatJson("TRANSLATE", Prompts.translateSystem(request), Prompts.translateUser(request.rows()), false));
     }
@@ -87,6 +61,10 @@ public class OpenAiLlmClient implements LlmClient {
 
     @Override public List<TranslationResult> fixTermsBatch(List<FixTermsRow> rows) {
         return results(chatJson("FIX_TERMS", Prompts.FIX_TERMS_SYSTEM, Prompts.fixTermsUser(rows), false));
+    }
+
+    @Override public List<TranslationResult> termSwapBatch(List<FixTermsRow> rows) {
+        return results(chatJson("TERM_SWAP", Prompts.TERM_SWAP_SYSTEM, Prompts.fixTermsUser(rows), false));
     }
 
     @Override public List<ProofreadResult> proofreadBatch(ProofreadBatchRequest request) {
@@ -110,6 +88,13 @@ public class OpenAiLlmClient implements LlmClient {
         List<PhraseCategory> out = new ArrayList<>();
         for (JsonNode n : chatJson("CLASSIFY_PHRASES", Prompts.CLASSIFY_SYSTEM, Prompts.classifyUser(phrases), true))
             out.add(new PhraseCategory(n.path("src").asText(), n.path("category").asText("")));
+        return out;
+    }
+
+    @Override public List<TermDraft> draftTerms(TermDraftRequest req) {
+        List<TermDraft> out = new ArrayList<>();
+        for (JsonNode n : chatJson("DRAFT_TERMS", Prompts.DRAFT_TERMS_SYSTEM, Prompts.draftTermsUser(req), false))
+            out.add(new TermDraft(n.path("src").asText(), n.path("ko").asText(""), n.path("reason").asText("")));
         return out;
     }
 

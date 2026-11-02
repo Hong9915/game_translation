@@ -7,13 +7,10 @@ import com.gametrans.game.GameRepository;
 import com.gametrans.glossary.GlossaryEntry.Kind;
 import com.gametrans.glossary.GlossaryEntry.MatchMode;
 import com.gametrans.josa.JosaClient;
-import com.gametrans.memory.GameTerm;
-import com.gametrans.memory.GameTermRepository;
 import com.gametrans.normalize.SegmentRepository;
 import com.gametrans.project.Project;
 import com.gametrans.project.ProjectRepository;
 import com.gametrans.review.ReviewEvents;
-import com.gametrans.term.CandidateMiner;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
@@ -49,7 +46,6 @@ public class GlossaryService {
     private final SegmentRepository segments;
     private final ActivityService activities;
     private final CandidateMiner miner;
-    private final GameTermRepository gameTerms;
     private final JosaClient josa;
 
     @PersistenceContext
@@ -57,11 +53,10 @@ public class GlossaryService {
 
     public GlossaryService(GlossaryEntryRepository repo, GlossaryApplier applier, EffectiveGlossary effective,
                            ProjectRepository projects, ReviewEvents events, GameRepository games, SegmentRepository segments,
-                           ActivityService activities, CandidateMiner miner, GameTermRepository gameTerms, JosaClient josa) {
+                           ActivityService activities, CandidateMiner miner, JosaClient josa) {
         this.josa = josa;
         this.activities = activities;
         this.miner = miner;
-        this.gameTerms = gameTerms;
         this.repo = repo;
         this.applier = applier;
         this.effective = effective;
@@ -183,14 +178,12 @@ public class GlossaryService {
     /**
      * 단어장에 넣을 만한 원문 구절 추천(상한 없이 전부). 기존 표기 후보(suggest)와 같은 행(번역이 있는 행)을 읽어
      * {@link GlossaryRecommender}에 넘기고, 이 게임의 유효 단어장에 이미 원문으로 등록된 구절은 뺀다.
-     * 저장하지 않고 부를 때마다 다시 센다. 옛 파이프라인 용어집(game_term)에 같은 원문이 있으면 그 번역을 비교용으로 싣는다.
+     * 저장하지 않고 부를 때마다 다시 센다.
      */
     @Transactional(readOnly = true)
     public List<GlossaryDtos.Recommendation> recommend(Long gameId) {
-        String gameName = games.findById(gameId).orElseThrow(() -> new NotFoundException("게임을 찾을 수 없습니다: " + gameId)).getName();
-        Map<String, String> termKo = gameTerms.findByGameName(gameName).stream()
-                .collect(Collectors.toMap(GameTerm::getSrcText, GameTerm::getKo, (a, b) -> a));
-        return GlossaryRecommender.recommend(miner, rowsOf(gameId), srcFinds(gameId), termKo);
+        if (!games.existsById(gameId)) throw new NotFoundException("게임을 찾을 수 없습니다: " + gameId);
+        return GlossaryRecommender.recommend(miner, rowsOf(gameId), srcFinds(gameId));
     }
 
     /**
@@ -228,7 +221,8 @@ public class GlossaryService {
         return variants.stream().map(v -> standard.containsKey(v.find()) ? v.withStandard(standard.get(v.find())) : v).toList();
     }
 
-    private List<GlossarySuggester.Row> rowsOf(Long gameId) {
+    /** 이 게임에서 번역이 있는 (원문, 한국어) 행. 기존 표기 후보·추천·표기 갈림·단어장 요청이 같은 행을 본다. */
+    List<GlossarySuggester.Row> rowsOf(Long gameId) {
         return segments.findSrcKoInGame(gameId).stream().map(r -> new GlossarySuggester.Row(r.getSrc(), r.getKo())).toList();
     }
 
@@ -266,6 +260,39 @@ public class GlossaryService {
         GlossaryEntry saved = repo.save(e);
         logEdit(gameId, "ADD", saved, reviewerId);
         notifyChanged(gameId, reviewerId);
+        return new GlossaryDtos.SaveResult(dto(saved), applied);
+    }
+
+    /**
+     * 단어장 요청 승인 한 건(설계 2026-10-30). unify처럼 replace의 표기를 한 번 ko로 고치고 단어장 항목을 남기되,
+     * 같은 원문 항목이 이미 있으면 거절하지 않고 덮어쓴다. 원문이 1글자면 WHOLE — 칸 전체가 find인 행만 ko로 바꾸고
+     * replace는 무시한다(1글자는 부분 치환하면 엉뚱한 낱말까지 건드린다). PARTIAL은 old_ko가 없어 apply가 0이라 부르지 않는다.
+     * rewrite가 em.clear()를 하므로 항목 조회·저장은 그 뒤에 한다.
+     */
+    @Transactional
+    public GlossaryDtos.SaveResult adopt(Long gameId, String find, String ko, List<String> replace, List<String> keep, Long reviewerId) {
+        String f = trimmedFind(find);
+        String k = ko == null ? "" : ko.trim();
+        if (k.isEmpty()) throw new IllegalArgumentException("최종 표기를 입력하세요.");
+        if (!games.existsById(gameId)) throw new NotFoundException("게임을 찾을 수 없습니다: " + gameId);
+        boolean whole = f.codePointCount(0, f.length()) == 1;
+        List<String> rep = whole ? List.of() : cleaned(replace).stream().filter(r -> !r.equals(k)).toList();
+        List<String> kept = cleaned(keep).stream().filter(x -> !x.equals(k) && !rep.contains(x)).toList();
+
+        int applied = rep.isEmpty() ? 0 : rewrite(gameId, f, k, rep, reviewerId, applyFor(reviewerId));
+
+        GlossaryEntry e = repo.findByGameIdAndKindAndFind(gameId, Kind.SRC, f).orElseGet(GlossaryEntry::new);
+        boolean existed = e.getId() != null;
+        e.setGameId(gameId); e.setKind(Kind.SRC); e.setMatchMode(whole ? MatchMode.WHOLE : MatchMode.PARTIAL); e.setFind(f);
+        e.setKo(kept.isEmpty() ? k : null);
+        e.setNote(kept.isEmpty() ? null : k + withRo(k) + " 통일, " + String.join("/", kept) + "도 씀");
+        e.setOldKo(null);
+        if (e.getCreatedBy() == null) e.setCreatedBy(reviewerId);
+        e.setUpdatedAt(Instant.now());
+        GlossaryEntry saved = repo.save(e);
+        logEdit(gameId, existed ? "UPDATE" : "ADD", saved, reviewerId);
+        notifyChanged(gameId, reviewerId);
+        if (whole) applied += applier.apply(gameId, saved, reviewerId, applyFor(reviewerId));
         return new GlossaryDtos.SaveResult(dto(saved), applied);
     }
 

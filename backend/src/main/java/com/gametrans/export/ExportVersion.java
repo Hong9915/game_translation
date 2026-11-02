@@ -20,6 +20,10 @@ public class ExportVersion {
     private Long projectId;
     private int version;
     private String fileName;
+    /** 시트 하나만 내보낸 수정본이면 그 시트, 파일 전체면 null. */
+    private String sheetName;
+    /** 최종 수정분만 담은 수정본(2026-10-19). 차수를 파일 전체 수정본과 따로 센다. */
+    private boolean finalOnly;
     private String storagePath;
     private int filledRows;
     private int flaggedRows;

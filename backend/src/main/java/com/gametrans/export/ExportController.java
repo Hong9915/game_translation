@@ -25,8 +25,8 @@ public class ExportController {
 
     @GetMapping("/preview")
     public ExportPreview preview(@PathVariable Long id, @RequestParam(required = false) String sheet,
-                                 @RequestParam(required = false) Double ratio) {
-        return service.preview(id, sheet, ratio);
+                                 @RequestParam(required = false) Double ratio, @RequestParam(defaultValue = "false") boolean single) {
+        return service.preview(id, sheet, ratio, single);
     }
 
     @GetMapping("/versions")

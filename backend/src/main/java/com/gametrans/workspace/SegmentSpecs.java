@@ -3,9 +3,11 @@ package com.gametrans.workspace;
 import com.gametrans.normalize.Segment;
 import com.gametrans.text.EmptyMarkers;
 import com.gametrans.workspace.WorkspaceDtos.RowFilter;
+import com.gametrans.workspace.WorkspaceDtos.SearchIn;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Root;
+import java.util.List;
 import org.springframework.data.jpa.domain.Specification;
 
 /** 검수 그리드 목록의 WHERE 조각들. 전 행을 메모리에 올리지 않고 DB에서 거른다. */
@@ -14,6 +16,32 @@ public final class SegmentSpecs {
 
     public static Specification<Segment> inSheet(Long projectId, String sheet) {
         return (root, q, cb) -> cb.and(cb.equal(root.get("projectId"), projectId), cb.equal(root.get("sheetName"), sheet), cb.isFalse(root.get("skipped")));
+    }
+
+    /** 범위의 (프로젝트, 시트) 가운데 하나에 든 건너뛰지 않은 행. 시트 하나 범위면 inSheet와 같다. */
+    public static Specification<Segment> inScope(SheetScope scope) {
+        return (root, q, cb) -> cb.and(cb.or(scope.sheets().stream()
+                .map(r -> cb.and(cb.equal(root.get("projectId"), r.projectId()), cb.equal(root.get("sheetName"), r.sheet())))
+                .toArray(jakarta.persistence.criteria.Predicate[]::new)), cb.isFalse(root.get("skipped")));
+    }
+
+    /**
+     * 범위 정렬: 범위 안 순번(게임 순서) → 행 → 열 쌍. 시트 하나 범위면 순번을 빼서 기존 (행, 열 쌍) 정렬과 똑같다
+     * (상수 식은 Postgres가 ORDER BY 위치 번호로 읽어 오류를 낸다).
+     */
+    static List<jakarta.persistence.criteria.Order> scopeOrder(CriteriaBuilder cb, Root<Segment> root, SheetScope scope) {
+        List<jakarta.persistence.criteria.Order> out = new java.util.ArrayList<>();
+        if (scope.sheets().size() > 1) {
+            CriteriaBuilder.Case<Integer> c = cb.selectCase();
+            for (int i = 0; i < scope.sheets().size(); i++) {
+                SheetScope.SheetRef r = scope.sheets().get(i);
+                c = c.when(cb.and(cb.equal(root.get("projectId"), r.projectId()), cb.equal(root.get("sheetName"), r.sheet())), i);
+            }
+            out.add(cb.asc(c.otherwise(scope.sheets().size())));
+        }
+        out.add(cb.asc(root.get("rowNo")));
+        out.add(cb.asc(root.get("pairIndex")));
+        return out;
     }
 
     /**
@@ -36,6 +64,8 @@ public final class SegmentSpecs {
             case NOT_REVIEW2 -> cb.isFalse(root.get("review2"));
             case NOT_CONFIRMED -> cb.isFalse(root.get("confirmed"));
             case NEEDS_CHECK -> cb.isTrue(root.get("needsCheck"));
+            case FINAL_MARK -> cb.isTrue(root.get("finalMark"));
+            case NOT_FINAL_MARK -> cb.isFalse(root.get("finalMark"));
             case MINE -> me == null ? cb.disjunction() : cb.equal(root.get("assigneeId"), me);
             case UNASSIGNED -> cb.isNull(root.get("assigneeId"));
             case TERM_MISS -> cb.isNotNull(root.get("termMiss"));
@@ -47,12 +77,19 @@ public final class SegmentSpecs {
         };
     }
 
-    /** ID·원문·Fix·비고에서 대소문자 무시 부분 일치. LIKE 특수문자는 글자 그대로 찾는다. */
-    static Specification<Segment> search(String q) {
+    /**
+     * 대소문자 무시 부분 일치. LIKE 특수문자는 글자 그대로 찾는다. 기본은 원문·Fix·비고에서(ID는 안 찾는다),
+     * EXISTING_KO면 기존 한국어에서만, SRC_CONTAINS면 원문에서만 찾고, SRC_EXACT면 원문이 검색어와 글자 그대로 같은 행만 고른다.
+     */
+    static Specification<Segment> search(String q, SearchIn in) {
         if (q == null || q.isBlank()) return (root, cq, cb) -> cb.conjunction();
+        if (in == SearchIn.SRC_EXACT) return (root, cq, cb) -> cb.equal(root.<String>get("srcText"), q);
         String pattern = likePattern(q);
+        if (in == SearchIn.EXISTING_KO)
+            return (root, cq, cb) -> cb.like(cb.lower(cb.coalesce(root.<String>get("existingKoText"), "")), pattern, '\\');
+        if (in == SearchIn.SRC_CONTAINS)
+            return (root, cq, cb) -> cb.like(cb.lower(cb.coalesce(root.<String>get("srcText"), "")), pattern, '\\');
         return (root, cq, cb) -> cb.or(
-                cb.like(cb.lower(cb.coalesce(root.<String>get("keyText"), "")), pattern, '\\'),
                 cb.like(cb.lower(cb.coalesce(root.<String>get("srcText"), "")), pattern, '\\'),
                 cb.like(cb.lower(cb.coalesce(root.<String>get("latestKo"), "")), pattern, '\\'),
                 cb.like(cb.lower(cb.coalesce(root.<String>get("note"), "")), pattern, '\\'));

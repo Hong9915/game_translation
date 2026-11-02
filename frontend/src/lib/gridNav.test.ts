@@ -5,7 +5,9 @@ describe('move', () => {
   it('moves across columns and rows and stops at the edges', () => {
     expect(move({ row: 0, col: 'fix' }, 'ArrowRight', 10)).toEqual({ row: 0, col: 'review1' })
     expect(move({ row: 0, col: 'needsCheck' }, 'ArrowRight', 10)).toEqual({ row: 0, col: 'confirmed' })
-    expect(move({ row: 0, col: 'confirmed' }, 'ArrowRight', 10)).toEqual({ row: 0, col: 'note' })
+    // 최종 수정 열은 순서에 늘 있고, 일반 시트에서는 그리드가 숨긴 열을 건너뛴다
+    expect(move({ row: 0, col: 'confirmed' }, 'ArrowRight', 10)).toEqual({ row: 0, col: 'finalMark' })
+    expect(move({ row: 0, col: 'finalMark' }, 'ArrowRight', 10)).toEqual({ row: 0, col: 'note' })
     expect(move({ row: 0, col: 'note' }, 'ArrowRight', 10)).toEqual({ row: 0, col: 'note' })
     expect(move({ row: 0, col: 'idx' }, 'ArrowLeft', 10)).toEqual({ row: 0, col: 'idx' })
     expect(move({ row: 0, col: 'fix' }, 'ArrowUp', 10)).toEqual({ row: 0, col: 'fix' })

@@ -1,13 +1,16 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useDeferredValue, useEffect, useState } from 'react'
 import { api } from '../../api/client'
+import type { ReviewTarget } from '../../lib/reviewTarget'
 import type { TagSpacingRow } from '../../api/types'
 import { tagSpacingParts } from '../../lib/spacing'
 import { Button } from '../ui/Button'
 
 interface Props {
-  projectId: number
-  sheet: string
+  /** 리뷰 범위(파일 화면의 시트 하나 또는 게임 화면의 고른 시트들). */
+  target: ReviewTarget
+  /** 제목에 붙는 범위 이름(시트 이름, 또는 "시트 3개"). */
+  label: string
   /** 행을 고쳤을 때(그리드를 새로 읽게). 창은 열어 둔다. */
   onFixed: (applied: number) => void
   onClose: () => void
@@ -28,8 +31,9 @@ function After({ r }: { r: TagSpacingRow }) {
  * 리뷰 화면의 태그 띄어쓰기 창(2026-10-08). 지금 시트에서 태그가 든 행 가운데 Kiwi가 태그 경계에서 낱말이 갈린다고 본 행을 받아,
  * 고른 행만 고친다. 고친 행은 목록에서 접고 창은 열어 둔다.
  */
-export function TagSpacingDialog({ projectId, sheet, onFixed, onClose }: Props) {
-  const list = useQuery({ queryKey: ['tag-spacing', projectId, sheet], queryFn: () => api.workspace.tagSpacing(projectId, sheet), staleTime: 0, refetchOnWindowFocus: false })
+export function TagSpacingDialog({ target, label, onFixed, onClose }: Props) {
+  const list = useQuery({ queryKey: ['tag-spacing', target], queryFn: () => api.review(target).tagSpacing(), staleTime: 0, refetchOnWindowFocus: false })
+  const showSheet = target.kind === 'game'
   const [skipped, setSkipped] = useState<ReadonlySet<number>>(new Set())
   const [fixed, setFixed] = useState<ReadonlySet<number>>(new Set())
   const [search, setSearch] = useState('')
@@ -41,7 +45,7 @@ export function TagSpacingDialog({ projectId, sheet, onFixed, onClose }: Props) 
   const allChosen = shown.length > 0 && chosen.length === shown.length
 
   const fix = useMutation({
-    mutationFn: (items: TagSpacingRow[]) => api.workspace.fixTagSpacing(projectId, items.map(({ segmentId, before, after }) => ({ segmentId, before, after }))),
+    mutationFn: (items: TagSpacingRow[]) => api.review(target).fixTagSpacing(items.map(({ segmentId, before, after }) => ({ segmentId, before, after }))),
     onSuccess: (r, items) => {
       setFixed((s) => new Set([...s, ...items.map((x) => x.segmentId)]))
       const missed = items.length - r.applied
@@ -67,7 +71,7 @@ export function TagSpacingDialog({ projectId, sheet, onFixed, onClose }: Props) 
     <div className="fade-in fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4" role="dialog" aria-modal="true" aria-label="태그 띄어쓰기"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }} onKeyDown={(e) => e.stopPropagation()}>
       <div className="pop-in flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl bg-white p-5 text-sm shadow-2xl">
-        <h2 className="text-[15px] font-semibold text-ink">태그 띄어쓰기 · {sheet}</h2>
+        <h2 className="text-[15px] font-semibold text-ink">태그 띄어쓰기 · {label}</h2>
         <p className="mt-1 break-keep text-xs text-muted">
           태그 바로 앞뒤에 낱말이 붙은 곳을 Kiwi 띄어쓰기로 보고, 띄워야 할 경계에만 공백을 넣습니다. 조사·숫자 뒤·줄바꿈 옆은 띄우지 않습니다.
           확정한 행은 보이지 않습니다. 고친 행은 변경 내역에 "태그 띄어쓰기" 한 건으로 남고 되돌릴 수 있습니다.
@@ -92,7 +96,7 @@ export function TagSpacingDialog({ projectId, sheet, onFixed, onClose }: Props) 
                   <li key={r.segmentId} aria-label={r.after} className="border-b border-lineSoft py-2">
                     <label className="flex cursor-pointer items-start gap-3">
                       <input type="checkbox" className="mt-1" aria-label={r.after} checked={!skipped.has(r.segmentId)} onChange={() => toggle(r.segmentId)} />
-                      <span className="w-12 shrink-0 pt-px text-right text-xs tabular-nums text-muted">{r.rowNo}행</span>
+                      <span className={`${showSheet ? 'w-28' : 'w-12'} shrink-0 truncate pt-px text-right text-xs tabular-nums text-muted`}>{showSheet && r.sheet ? `${r.sheet} ` : ''}{r.rowNo}행</span>
                       <span className="min-w-0 flex-1">
                         <span className="block text-[14px] text-ink"><After r={r} /></span>
                         <span className="mt-0.5 block truncate text-xs text-muted">{r.src}</span>

@@ -47,7 +47,7 @@ public class ProjectService {
         this.jobs = jobs;
     }
 
-    /** 프로젝트와 딸린 세그먼트·용어·리비전·작업(DB cascade), 올린 파일과 내보낸 파일을 모두 지운다. */
+    /** 프로젝트와 딸린 세그먼트·리비전·작업(DB cascade), 올린 파일과 내보낸 파일을 모두 지운다. */
     @Transactional
     public void delete(Long id) {
         Project p = get(id);
@@ -142,7 +142,7 @@ public class ProjectService {
     }
 
     /** 업로드 파일명에서 경로 조각(디렉터리 순회 포함)을 제거하고 파일명만 남긴다. */
-    private static String sanitizeFileName(String rawName) {
+    public static String sanitizeFileName(String rawName) {
         String withoutDirs = rawName.replace('\\', '/');
         int slash = withoutDirs.lastIndexOf('/');
         String base = slash >= 0 ? withoutDirs.substring(slash + 1) : withoutDirs;

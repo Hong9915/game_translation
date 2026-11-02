@@ -8,7 +8,8 @@ import java.util.Map;
 public final class TranslateDtos {
     private TranslateDtos() {}
 
-    public record TranslateRequest(String basis, String instructions, Integer batchSize) {}
+    /** sheet: 이 시트만(없으면 파일 전체). sourceLang: DeepL 원문 언어 "ZH"(기본) | "EN"(영어가 있는 행만 영어로). */
+    public record TranslateRequest(String basis, String instructions, Integer batchSize, String sheet, String sourceLang) {}
     /** proofPendingRows: 교정 모드에서 아직 유지/수정 판정을 받지 않은 행. doneRows에는 들어가지 않는다. */
     public record TranslateStatus(long targetRows, long doneRows, long proofPendingRows, long glossaryCount, int batchSize, JobDto job) {}
 
@@ -21,6 +22,7 @@ public final class TranslateDtos {
     public record RowShortenResult(String ko, int len, int target, List<ShortenCandidate> candidates) {}
     public record ShortenCandidate(String ko, int len) {}
     /** source: MEMORY(메모리의 같은 원문을 그대로 씀) | LLM. glossary·references는 이 번역에 실제로 적용한 것. */
+    /** source: MEMORY | LLM | DEEPL | CACHE | GLOSSARY. problem: DeepL 태그 어긋남("TAG")·중국어 남음("HAN"), 없으면 null. */
     public record QuickTranslateResult(String ko, String source, Map<String, String> glossary, List<Reference> references,
-                                       List<String> termMiss, boolean placeholderOk) {}
+                                       List<String> termMiss, boolean placeholderOk, String problem) {}
 }

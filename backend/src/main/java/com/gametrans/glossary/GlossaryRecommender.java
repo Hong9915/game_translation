@@ -2,7 +2,6 @@ package com.gametrans.glossary;
 
 import com.gametrans.glossary.GlossaryDtos.Recommendation;
 import com.gametrans.glossary.GlossaryDtos.Rendering;
-import com.gametrans.term.CandidateMiner;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,9 +31,9 @@ public final class GlossaryRecommender {
     static final Set<String> GLUE_VERBS = Set.of(
             "造成", "附加", "提升", "提高", "增加", "降低", "减少", "获得", "获取", "用于", "进行", "使用", "达到", "即可");
 
-    /** existingFinds = 이미 단어장에 원문으로 등록된 문자열, termKo = 옛 파이프라인 용어집의 원문 → 번역. */
+    /** existingFinds = 이미 단어장에 원문으로 등록된 문자열. */
     public static List<Recommendation> recommend(CandidateMiner miner, List<GlossarySuggester.Row> rows,
-                                                 Set<String> existingFinds, Map<String, String> termKo) {
+                                                 Set<String> existingFinds) {
         Set<String> sentences = new LinkedHashSet<>();
         for (GlossarySuggester.Row r : rows) if (r.src() != null && !r.src().isBlank()) sentences.add(DIGITS.matcher(r.src()).replaceAll("0"));
         GlossarySuggester.Corpus corpus = GlossarySuggester.corpus(rows);
@@ -44,7 +43,7 @@ public final class GlossaryRecommender {
             GlossarySuggester.Result now = corpus.suggest(p.text(), null);
             List<Rendering> renderings = now.candidates().stream()
                     .map(c -> new Rendering(c.oldKo(), c.rows(), clip(c.example().src()), clip(c.example().before()))).toList();
-            out.add(new Recommendation(p.text(), p.docFreq(), now.rows(), renderings, termKo.get(p.text())));
+            out.add(new Recommendation(p.text(), p.docFreq(), now.rows(), renderings));
         }
         return out;
     }

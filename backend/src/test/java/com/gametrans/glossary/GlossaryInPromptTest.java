@@ -10,11 +10,8 @@ import com.gametrans.FakeLlmClient;
 import com.gametrans.IntegrationTest;
 import com.gametrans.TestProjects;
 import com.gametrans.llm.LlmClient;
-import com.gametrans.memory.GameTerm;
-import com.gametrans.memory.GameTermRepository;
 import com.gametrans.normalize.Segment;
 import com.gametrans.normalize.SegmentRepository;
-import com.gametrans.project.Project;
 import com.gametrans.project.ProjectRepository;
 import com.gametrans.translate.RevisionService;
 import com.gametrans.translate.TranslationRevision;
@@ -35,7 +32,6 @@ class GlossaryInPromptTest extends IntegrationTest {
     @Autowired ProjectRepository projects;
     @Autowired SegmentRepository segments;
     @Autowired RevisionService revisions;
-    @Autowired GameTermRepository gameTerms;
     @Autowired LlmClient llm;
     FakeLlmClient fakeLlm;
 
@@ -129,18 +125,11 @@ class GlossaryInPromptTest extends IntegrationTest {
     }
 
     @Test
-    void skippedAndTermRowsAreRejected() throws Exception {
+    void skippedRowsAreRejected() throws Exception {
         gameOfNewProject();
 
         Segment other = segments.findByProjectIdAndSheetNameAndSkippedFalseOrderByRowNoAscPairIndexAsc(pid, "Skill").stream()
                 .filter(s -> !SRC.equals(s.getSrcText())).findFirst().orElseThrow();
-        other.setTerm(true);
-        segments.save(other);
-        mvc.perform(post("/api/segments/{sid}/translate", other.getId()))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value(Matchers.containsString("용어")));
-
-        other.setTerm(false);
         other.setSkipped(true);
         segments.save(other);
         mvc.perform(post("/api/segments/{sid}/translate", other.getId()))
@@ -151,16 +140,8 @@ class GlossaryInPromptTest extends IntegrationTest {
     }
 
     @Test
-    void quickTranslateUsesTheGameGlossaryAndAGameEntryBeatsAnOldTerm() throws Exception {
+    void quickTranslateUsesOnlyTheGameGlossary() throws Exception {
         Long g = gameOfNewProject();
-        Project p = projects.findById(pid).orElseThrow();
-        String game = p.getGame().getName();
-        // 구 공용 용어: 正义은 단어장에 없으니 그대로 쓰이고, 裁决은 단어장 항목에 밀린다
-        for (String[] t : new String[][] {{"正义", "정의"}, {"裁决", "재결"}}) {
-            GameTerm gt = new GameTerm();
-            gt.setGameName(game); gt.setSrcText(t[0]); gt.setType("OTHER"); gt.setKo(t[1]);
-            gameTerms.save(gt);
-        }
         addEntry(g, "{\"kind\":\"SRC\",\"matchMode\":\"PARTIAL\",\"find\":\"裁决\",\"ko\":\"판결\"}");
         addEntry(g, "{\"kind\":\"SRC\",\"matchMode\":\"PARTIAL\",\"find\":\"红包\",\"ko\":\"행운 봉투\"}");
         addEntry(g, "{\"kind\":\"SRC\",\"matchMode\":\"PARTIAL\",\"find\":\"正义\",\"note\":\"정의감이 아니라 정의(법)\"}");
@@ -172,7 +153,7 @@ class GlossaryInPromptTest extends IntegrationTest {
 
         assertThat(fakeLlm.lastGlossary())
                 .containsEntry("裁决", "판결")
-                .containsEntry("正义", "정의")
+                .doesNotContainKey("正义")    // 메모 전용 항목은 용어 칸이 아니라 지시문으로 간다
                 .doesNotContainKey("红包");
         assertThat(fakeLlm.lastInstructions()).startsWith("짧게").contains("정의감이 아니라 정의(법)");
     }

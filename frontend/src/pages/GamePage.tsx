@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { Project } from '../api/types'
+import { Chip } from '../components/ui/Chip'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { inputClass } from '../components/ui/Field'
@@ -29,9 +30,12 @@ export function GamePage() {
   // 파일 삭제는 두 번 눌러 확정한다(브라우저 confirm 대신 인라인 확인).
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const [openId, setOpenId] = useState<number | null>(null)
+  const termFileRef = useRef<HTMLInputElement>(null)
+  const [termError, setTermError] = useState<string | null>(null)
 
   const game = useQuery({ queryKey: ['game', gameId], queryFn: () => api.games.get(gameId) })
   const list = useQuery({ queryKey: ['projects', gameId], queryFn: () => api.projects.list(gameId) })
+  const termRequests = useQuery({ queryKey: ['termRequests', gameId], queryFn: () => api.termRequests.list(gameId) })
   const invalidate = () => { qc.invalidateQueries({ queryKey: ['projects'] }); qc.invalidateQueries({ queryKey: ['games'] }); qc.invalidateQueries({ queryKey: ['game', gameId] }) }
 
   // 폴더 선택 input은 React 속성으로 못 넣어서 직접 붙인다
@@ -41,6 +45,11 @@ export function GamePage() {
     mutationFn: (name: string) => api.games.rename(gameId, name),
     onSuccess: (g) => { qc.setQueryData(['game', gameId], g); setRenaming(false); setError(null); qc.invalidateQueries({ queryKey: ['games'] }) },
     onError: (e: Error) => setError(e.message),
+  })
+  const uploadTermRequest = useMutation({
+    mutationFn: (file: File) => api.termRequests.upload(gameId, file),
+    onSuccess: (r) => { setTermError(null); qc.invalidateQueries({ queryKey: ['termRequests', gameId] }); navigate(`/games/${gameId}/glossary/requests/${r.id}`) },
+    onError: (e: Error) => setTermError(e.message),
   })
   const removeGame = useMutation({
     mutationFn: () => api.games.delete(gameId),
@@ -113,6 +122,31 @@ export function GamePage() {
             {game.data ? `파일 ${game.data.projects.toLocaleString()}개 · ` : ''}
             이 게임의 파일끼리 번역 메모리를 공유합니다.
           </p>
+          <div className="flex flex-wrap items-center gap-2">
+          {game.data && game.data.projects > 0 && (
+            // 게임의 모든 파일·시트를 한 표로(설계 2026-10-12)
+            <Link to={`/games/${gameId}/review`} className="press inline-flex w-fit items-center rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink hover:bg-canvas">
+              게임 전체 리뷰
+            </Link>
+          )}
+          <input ref={termFileRef} aria-label="단어장 요청 양식 선택" type="file" accept=".xlsx" className="sr-only"
+            onChange={(e) => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ''; if (f) uploadTermRequest.mutate(f) }} />
+          <button type="button" disabled={uploadTermRequest.isPending} onClick={() => termFileRef.current?.click()}
+            className="press inline-flex w-fit items-center rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink hover:bg-canvas disabled:opacity-50">
+            {uploadTermRequest.isPending ? '올리는 중…' : '단어장 요청 올리기'}
+          </button>
+          </div>
+          {termError && <p className="text-xs text-orange">{termError}</p>}
+          {termRequests.data && termRequests.data.length > 0 && (
+            <div className="flex flex-col gap-0.5 text-xs">
+              <span className="font-medium text-muted">단어장 요청</span>
+              {termRequests.data.map((r) => (
+                <Link key={r.id} to={`/games/${gameId}/glossary/requests/${r.id}`} className="text-body hover:underline">
+                  {r.fileName} · {new Date(r.createdAt).toLocaleDateString('ko-KR')} · 승인 {r.approved}/{r.total}
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -162,6 +196,7 @@ export function GamePage() {
                   <td className="px-3 py-3">
                     <button type="button" className="text-left font-medium hover:underline" aria-expanded={openId === p.id}
                       onClick={() => setOpenId(openId === p.id ? null : p.id)}><span aria-hidden className="mr-1 text-muted">{openId === p.id ? '▾' : '▸'}</span><span>{p.fileName}</span></button>
+                    {p.finalReview && <span className="ml-2 align-middle"><Chip color="green">최종 리뷰</Chip></span>}
                   </td>
                   <td className="px-3 py-3">{p.sheetCount}</td>
                   <td className="px-3 py-3">{p.rowCount.toLocaleString()}</td>
@@ -193,7 +228,7 @@ export function GamePage() {
         <div className="flex items-center gap-2 text-xs">
           {confirmGameDelete
             ? <>
-                <span className="text-orange">이 게임과 파일 {game.data?.projects ?? 0}개와 용어집·번역 메모리가 모두 지워집니다.</span>
+                <span className="text-orange">이 게임과 파일 {game.data?.projects ?? 0}개와 번역 메모리가 모두 지워집니다.</span>
                 <Button variant="danger" onClick={() => removeGame.mutate()} disabled={removeGame.isPending}>정말 삭제</Button>
                 <Button onClick={() => setConfirmGameDelete(false)} disabled={removeGame.isPending}>취소</Button>
               </>

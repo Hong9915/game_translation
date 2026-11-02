@@ -25,7 +25,7 @@ import org.hibernate.type.SqlTypes;
 @DynamicUpdate
 @Getter @Setter @NoArgsConstructor
 public class Segment {
-    /** 건너뛴 이유. EMPTY_SRC: 원문이 비었거나 N/A 같은 표시. INTENTIONAL: 원문은 있지만 영어·한국어 모두 N/A 표시라 일부러 비워 둔 행. */
+    /** 건너뛴 이유. EMPTY_SRC: 원문이 비었거나 N/A 같은 표시. INTENTIONAL: 예전 정규화가 영어·한국어 모두 N/A면 건너뛰던 행 — 지금은 만들지 않고, 다시 정규화하면 번역 대상이 된다. */
     public enum SkipReason { EMPTY_SRC, INTENTIONAL }
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -39,8 +39,6 @@ public class Segment {
     private String keyText;
     private String srcText;
     private String enText;
-    private boolean isTerm;
-    private Long termId;
     private boolean skipped;
     @Enumerated(EnumType.STRING)
     private SkipReason skipReason;
@@ -64,6 +62,10 @@ public class Segment {
     private boolean needsCheck;
     /** 확정(2026-10-06). 같은 원문 전파·단어장 일괄 적용·되돌리기는 확정 행을 건너뛴다. 손 편집은 막지 않는다. */
     private boolean confirmed;
+    /** 최종 리뷰 레인(V26). 정규화가 그 시트 설정(fixCol 유무)으로 채운다. 같은 원문 묶음 기능은 같은 레인끼리만. */
+    private boolean finalReview;
+    /** "최종 수정" 표시(V26). 검수 체크처럼 행을 잠그지 않는다. 최종 리뷰 시트에서 색칠·내보내기 채우기에 쓴다. */
+    private boolean finalMark;
     /** 검수자가 적는 비고. 내보내기 파일의 비고 열로 나간다. 없으면 null. */
     private String note;
     /** 최신 리비전의 한국어(Fix). DB 트리거(V14)가 유지하므로 여기서는 읽기만 한다. 리비전이 없으면 null. */

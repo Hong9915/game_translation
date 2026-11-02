@@ -1,10 +1,10 @@
 package com.gametrans.glossary;
 
+import com.gametrans.glossary.GlossaryDtos.Rendering;
 import com.gametrans.glossary.GlossaryDtos.Variant;
 import com.gametrans.glossary.GlossaryDtos.VariantExample;
 import com.gametrans.glossary.GlossaryDtos.VariantRendering;
 import com.gametrans.glossary.GlossarySuggester.Row;
-import com.gametrans.term.CandidateMiner;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collection;
@@ -63,17 +63,14 @@ public final class GlossaryVariants {
      * 되풀이된 한 문장이 기준을 혼자 넘기지 않게. 보고하는 행 수는 되풀이를 모두 센 실제 행 수다. 갈린 쌍 수 많은 순.
      */
     public static List<Variant> find(CandidateMiner miner, List<Row> allRows, Set<String> existingFinds) {
-        Map<Row, Integer> pairs = new LinkedHashMap<>();
-        for (Row r : allRows)
-            if (r.src() != null && !r.src().isBlank() && r.ko() != null) pairs.merge(r, 1, Integer::sum);
-        List<Row> rows = List.copyOf(pairs.keySet());
-        int[] weight = pairs.values().stream().mapToInt(Integer::intValue).toArray();
+        Pairs pairs = pairs(allRows);
+        List<Row> rows = pairs.rows();
+        int[] weight = pairs.weight();
         List<String> sentences = rows.stream().map(Row::src).filter(s -> s != null && !s.isBlank()).distinct().toList();
-        GlossarySuggester.Corpus corpus = GlossarySuggester.corpus(rows);
         List<Found> found = new ArrayList<>();
         for (CandidateMiner.Phrase p : miner.mine(sentences, Integer.MAX_VALUE, MIN_ROWS, GlossaryRecommender.GLUE_VERBS)) {
             if (existingFinds.contains(p.text())) continue;
-            Found f = judge(corpus, rows, p.text());
+            Found f = judge(pairs.corpus(), rows, p.text());
             if (f != null) found.add(f);
         }
         // 겹친 구절 정리(属性额外 / 属性额外提升): 다른 표기와 그 행이 똑같으면 짧은 구절 하나만
@@ -83,6 +80,36 @@ public final class GlossaryVariants {
         for (Found f : found) if (f.kind() != Kind.ALT || seen.add(f.altKey())) kept.add(f);
         kept.sort(Comparator.comparingInt(Found::split).reversed().thenComparing(Found::find));
         return kept.stream().map(f -> dto(f, rows, weight)).toList();
+    }
+
+    /** 겹치지 않는 (원문, 번역) 쌍, 쌍마다 되풀이 수, 쌍 위의 색인. 여러 구절을 볼 때 한 번 만들어 돌려 쓴다. */
+    record Pairs(List<Row> rows, int[] weight, GlossarySuggester.Corpus corpus) {}
+
+    static Pairs pairs(List<Row> allRows) {
+        Map<Row, Integer> pairs = new LinkedHashMap<>();
+        for (Row r : allRows)
+            if (r.src() != null && !r.src().isBlank() && r.ko() != null) pairs.merge(r, 1, Integer::sum);
+        List<Row> rows = List.copyOf(pairs.keySet());
+        return new Pairs(rows, pairs.values().stream().mapToInt(Integer::intValue).toArray(), GlossarySuggester.corpus(rows));
+    }
+
+    /**
+     * 구절 하나의 표기 갈림을 표 탭과 같은 판정으로 본다(단어장 요청용). 주 표기 먼저, 다음 다른 표기(띄어쓰기 꼴 포함) — 행 수는
+     * 탭과 같이 되풀이까지 센 수, 예문은 표기마다 첫 예문. 갈림이 없거나 판정할 행이 모자라면 빈 목록. 단어장에 이미 있는 원문도 거르지 않는다.
+     */
+    static List<Rendering> renderings(Pairs pairs, String find) {
+        Found f = judge(pairs.corpus(), pairs.rows(), find);
+        if (f == null) return List.of();
+        Variant v = dto(f, pairs.rows(), pairs.weight());
+        List<Rendering> out = new ArrayList<>();
+        out.add(rendering(v.main()));
+        for (VariantRendering a : v.alts()) out.add(rendering(a));
+        return out;
+    }
+
+    private static Rendering rendering(VariantRendering r) {
+        VariantExample ex = r.examples().isEmpty() ? null : r.examples().get(0);   // examples()가 이미 clip한다
+        return new Rendering(r.ko(), r.rows(), ex == null ? null : ex.src(), ex == null ? null : ex.ko());
     }
 
     private static Found judge(GlossarySuggester.Corpus corpus, List<Row> rows, String p) {

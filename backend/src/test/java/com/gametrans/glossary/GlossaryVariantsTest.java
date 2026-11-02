@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.gametrans.glossary.GlossaryDtos.Variant;
 import com.gametrans.glossary.GlossaryDtos.VariantRendering;
 import com.gametrans.glossary.GlossarySuggester.Row;
-import com.gametrans.term.CandidateMiner;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;

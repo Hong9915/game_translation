@@ -3,10 +3,14 @@ package com.gametrans.translate;
 import com.gametrans.activity.Activity;
 import com.gametrans.activity.ActivityService;
 import com.gametrans.common.NotFoundException;
+import com.gametrans.config.AppProperties;
+import com.gametrans.deepl.DeepLTranslator;
 import com.gametrans.game.Game;
 import com.gametrans.game.GameService;
 import com.gametrans.normalize.Segment;
 import com.gametrans.normalize.SegmentRepository;
+import com.gametrans.project.Project;
+import com.gametrans.project.ProjectRepository;
 import com.gametrans.review.ReviewEvents;
 import com.gametrans.review.ReviewService;
 import com.gametrans.review.TermMissService;
@@ -18,6 +22,7 @@ import com.gametrans.translate.TranslateDtos.QuickTranslateResult;
 import com.gametrans.translate.TranslateDtos.RowTranslateRequest;
 import com.gametrans.workspace.WorkspaceDtos.RowDto;
 import com.gametrans.workspace.WorkspaceService;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -52,13 +57,18 @@ public class RowTranslateService {
     private final ReviewEvents events;
     private final TransactionTemplate tx;
     private final ActivityService activities;
+    private final AppProperties props;
+    private final ProjectRepository projectRepo;
 
     /** 지금 GPT에 가 있는 세그먼트. 같은 행을 두 번 눌러 리비전이 겹쳐 쌓이지 않게 한다. */
     private final Set<Long> running = ConcurrentHashMap.newKeySet();
 
     public RowTranslateService(SegmentRepository segments, GameService games, QuickTranslateService quick, RevisionService revisions,
                                TermMissService termMiss, ReviewService review, WorkspaceService workspace, ReviewerService reviewers,
-                               ReviewEvents events, TransactionTemplate tx, ActivityService activities) {
+                               ReviewEvents events, TransactionTemplate tx, ActivityService activities,
+                               AppProperties props, ProjectRepository projectRepo) {
+        this.props = props;
+        this.projectRepo = projectRepo;
         this.activities = activities;
         this.segments = segments;
         this.games = games;
@@ -82,25 +92,38 @@ public class RowTranslateService {
             // GPT 호출은 트랜잭션 밖에서 — 몇 초씩 DB 연결을 붙잡지 않게 한다
             Game game = games.get(termMiss.gameIdOf(s.getProjectId()));
             String en = EmptyMarkers.isEmpty(s.getEnText()) ? null : s.getEnText().trim();
-            QuickTranslateResult r = quick.translateOne(game, s.getSrcText(), en, req == null ? null : req.basis(),
-                    instructions(s, req == null ? null : req.instructions()), false);
-            return tx.execute(status -> save(segmentId, r.ko(), by));
+            boolean deepl = props.translate().deepl();
+            // DeepL이면 이 파일에서 마지막으로 고른 원문 언어를 따르고, 지시는 쓰지 않는다
+            String basis = deepl
+                    ? ("EN".equals(projectRepo.findById(s.getProjectId()).map(Project::getTranslateSourceLang).orElse("ZH")) ? "EN_FIRST" : "CN_ONLY")
+                    : (req == null ? null : req.basis());
+            QuickTranslateResult r = quick.translateOne(game, s.getSrcText(), en, basis,
+                    deepl ? null : instructions(s, req == null ? null : req.instructions()), false);
+            TranslationRevision.Author author = deepl ? TranslationRevision.Author.DEEPL : TranslationRevision.Author.LLM;
+            return tx.execute(status -> save(segmentId, r.ko(), by, author, r.problem()));
         } finally {
             running.remove(segmentId);
         }
     }
 
-    private RowDto save(Long segmentId, String ko, Long by) {
+    private RowDto save(Long segmentId, String ko, Long by, TranslationRevision.Author author, String problem) {
         Segment s = find(segmentId);
         // GPT를 기다리는 사이에 누가 완료로 찍었으면 저장하지 않는다 — 일괄 변경·저장은 완료 행을 건드리지 않는다
         check(s);
         // 사람이 시킨 한 행 다시 번역은 변경 내역에 RETRANSLATE로 남긴다(설계 2026-09-30 §1).
         Long activityId = activities.start(s.getProjectId(), Activity.Kind.RETRANSLATE, by, Map.of("segmentId", segmentId));
-        revisions.add(segmentId, ko, TranslationRevision.Author.LLM, by, activityId);
+        revisions.add(segmentId, ko, author, by, activityId);
         String miss = GlossaryCheck.format(GlossaryCheck.missing(s.getSrcText(), ko, termMiss.glossaryFor(s.getProjectId())));
         segments.updateTermMiss(segmentId, miss);
         // 벌크 update는 영속성 컨텍스트를 비켜 간다(saveHuman과 같은 사정) — 들고 있는 엔티티에 방금 쓴 값을 직접 반영해 응답·알림이 새 값을 보게 한다
         s.setTermMiss(miss);
+        if (problem != null) {
+            String reason = DeepLTranslator.problemNote(problem);
+            segments.updateMarks(List.of(segmentId), null, null, true, null, null);
+            String note = s.getNote() == null || s.getNote().isBlank() ? reason : s.getNote() + " · " + reason;
+            segments.updateNote(segmentId, note);
+            s.setNeedsCheck(true); s.setNote(note);   // 응답·알림이 새 값을 보게(updateTermMiss와 같은 사정)
+        }
         events.segmentUpdated(s.getProjectId(), by, review.row(segmentId, review.defaultRatio()));
         return workspace.row(s);
     }
@@ -111,7 +134,6 @@ public class RowTranslateService {
 
     private static void check(Segment s) {
         if (s.isSkipped()) throw new IllegalArgumentException("제외된 행은 번역하지 않습니다.");
-        if (s.isTerm()) throw new IllegalArgumentException("용어 행은 행 번역 대신 용어집에서 고치세요.");
     }
 
     /** 고정 지시 + 기존 한국어(있으면 참고로) + 사용자 지시. 단어장 메모는 translateOne이 이 뒤에 붙인다. */

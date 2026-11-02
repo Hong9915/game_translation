@@ -55,7 +55,7 @@ class MultiPairFlowTest extends IntegrationTest {
                 .andExpect(jsonPath("$.stats.totalRows").value(6))
                 .andExpect(jsonPath("$.stats.normalized").value(4))
                 .andExpect(jsonPath("$.stats.skipped").value(2))
-                .andExpect(jsonPath("$.stats.intentional").value(2))
+                .andExpect(jsonPath("$.stats.intentional").value(0))
                 .andExpect(jsonPath("$.stats.kept").value(1))
                 .andExpect(jsonPath("$.preview[0].indexLabel").value("Skill!2!B"))
                 .andExpect(jsonPath("$.preview[0].srcText").value("正义裁决"))

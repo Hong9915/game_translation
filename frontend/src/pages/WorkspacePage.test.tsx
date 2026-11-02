@@ -11,7 +11,7 @@ const rows = [
   { id: 10, rowNo: 2, pairIndex: 0, indexLabel: 'UI!2', keyText: 'UI_CONFIRM', src: '确认', en: 'Confirm', existingKo: '확인', fix: '확인', changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0 },
   { id: 11, rowNo: 3, pairIndex: 0, indexLabel: 'UI!3', keyText: 'ITEM_1001', src: '混沌圣物', en: 'Chaos Relic', existingKo: '혼돈의 성물', fix: '혼돈의 성물', changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0 },
 ]
-const saved = { row: { id: 11, indexLabel: 'UI!3', srcText: '混沌圣物', enText: 'Chaos Relic', isTerm: false, currentText: '성물', lenKo: 2, lenSrc: 4, flagged: false, history: [], done: false, assignee: null }, propagated: 0 }
+const saved = { row: { id: 11, indexLabel: 'UI!3', srcText: '混沌圣物', enText: 'Chaos Relic', currentText: '성물', lenKo: 2, lenSrc: 4, flagged: false, history: [], done: false, assignee: null }, propagated: 0 }
 const me = { id: 1, name: '형준', color: '#1f4b99' }
 
 // useWorkspaceEvents.test.tsx와 같은 모양 — SSE 이벤트를 실제로 흘려보내야 하는 테스트가 쓴다(그냥 no-op이면 부족).
@@ -50,6 +50,26 @@ const routes = () => [
 ]
 
 describe('WorkspacePage', () => {
+  it('최종 리뷰 시트를 열면 최종 수정 열이 보이고, 일반 시트로 바꾸면 사라진다', async () => {
+    const finalSummary = { ...summary, sheets: [{ ...summary.sheets[0], finalReview: true }, summary.sheets[1]] }
+    mockFetch([{ path: '/review/1/rows/summary', body: finalSummary }, ...routes()])
+    render()
+    expect(await screen.findByRole('columnheader', { name: '최종 수정' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('tab', { name: /Skill/ }))
+    await waitFor(() => expect(screen.queryByRole('columnheader', { name: '최종 수정' })).toBeNull())
+  })
+
+  it('최종 리뷰 시트끼리 옮겨도 최종 수정 필터가 풀리지 않는다', async () => {
+    const both = { ...summary, sheets: [{ ...summary.sheets[0], finalReview: true }, { ...summary.sheets[1], finalReview: true }] }
+    mockFetch([{ path: '/review/1/rows/summary', body: both }, ...routes()])
+    render()
+    await screen.findByRole('columnheader', { name: '최종 수정' })
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: '필터' }), 'NOT_FINAL_MARK')
+    await userEvent.click(screen.getByRole('tab', { name: /Skill/ }))
+    await screen.findByRole('columnheader', { name: '최종 수정' })
+    expect(screen.getByRole('combobox', { name: '필터' })).toHaveValue('NOT_FINAL_MARK')
+  })
+
   it('조사 확인 필터를 고르면 모두 적용 버튼이 뜨고, 확인 창에서 고르면 시트 전체를 고친다', async () => {
     const josaSummary = { ...summary, josa: 3, sheets: summary.sheets.map((s) => ({ ...s, josa: s.sheet === 'UI' ? 3 : 0 })) }
     const { calls } = mockFetch([
@@ -179,7 +199,7 @@ describe('WorkspacePage', () => {
       ...routes(),
       { method: 'PUT', path: '/segments/11/translation', body: { row: { ...saved.row, currentText: '새 문장' }, propagated: 2 } },
       // 다른 행(2행, UI_CONFIRM)을 고치는 다음 저장은 원문이 이 게임에서 하나뿐이라 전파가 없다(propagated: 0).
-      { method: 'PUT', path: '/segments/10/translation', body: { row: { id: 10, indexLabel: 'UI!2', srcText: '确认', enText: 'Confirm', isTerm: false, currentText: '확인!', lenKo: 3, lenSrc: 2, flagged: false, history: [], done: false, assignee: null }, propagated: 0 } },
+      { method: 'PUT', path: '/segments/10/translation', body: { row: { id: 10, indexLabel: 'UI!2', srcText: '确认', enText: 'Confirm', currentText: '확인!', lenKo: 3, lenSrc: 2, flagged: false, history: [], done: false, assignee: null }, propagated: 0 } },
     ])
     render()
     await screen.findByText('ITEM_1001')
@@ -273,29 +293,34 @@ describe('WorkspacePage', () => {
     expect(await screen.findByLabelText('찾을 문자열')).toHaveValue('')
   })
 
-  it('원문 우클릭 → GPT 번역은 추가 지시와 함께 행 번역 API를 부르고, 받은 행으로 Fix를 바꾼다', async () => {
-    localStorage.removeItem('gametrans.rowTranslateInstructions')
+  it('원문 우클릭 → DeepL 번역은 지시문 창을 거쳐 행 번역 API를 부르고, 받은 행으로 Fix를 바꾼다', async () => {
     const translated = { ...rows[1], fix: '카오스 성물', changed: true }
-    const { calls } = mockFetch([...routes(), { method: 'POST', path: '/segments/11/translate', body: translated }])
+    const game = { id: 3, name: '삼국지M', projects: 1, memory: 0, lastUploadedAt: null, createdAt: '2026-09-01T00:00:00Z', deeplInstructions: '짧게' }
+    const { calls } = mockFetch([...routes(), { method: 'POST', path: '/segments/11/translate', body: translated },
+      { method: 'PUT', path: '/games/3/deepl-instructions', body: { ...game, deeplInstructions: '짧게\n게임 용어로' } },
+      { path: '/games/3', body: game }])
     render()
     await screen.findByText('ITEM_1001')
     fireEvent.contextMenu(screen.getByText('混沌圣物'))
-    await userEvent.click(screen.getByRole('menuitem', { name: 'GPT 번역' }))
-    await userEvent.type(screen.getByRole('textbox', { name: '추가 지시' }), '짧게')
+    await userEvent.click(screen.getByRole('menuitem', { name: 'DeepL 번역' }))
+    const box = await screen.findByRole('textbox', { name: 'DeepL 지시문' })
+    await waitFor(() => expect(box).toHaveValue('짧게'))
+    await userEvent.type(box, '{Enter}게임 용어로')
     await userEvent.click(screen.getByRole('button', { name: '번역' }))
     expect(await screen.findByText('카오스 성물')).toBeInTheDocument()
+    expect(calls.find((c) => c.method === 'PUT' && c.url.includes('/games/3/deepl-instructions'))!.body).toEqual({ text: '짧게\n게임 용어로' })
     const call = calls.find((c) => c.method === 'POST' && c.url.includes('/segments/11/translate'))!
-    expect(call.body).toEqual({ instructions: '짧게' })
+    expect(call.body).toEqual({})
     expect(call.headers?.['X-Reviewer-Id']).toBe('1')
   })
 
-  it('GPT 번역이 실패하면 서버 메시지를 오류 배너에 보인다', async () => {
+  it('DeepL 번역이 실패하면 서버 메시지를 오류 배너에 보인다', async () => {
     mockFetch([...routes(), { method: 'POST', path: '/segments/11/translate', status: 400, body: { message: '이 행은 이미 번역 중입니다. 끝난 뒤에 다시 시도하세요.' } }])
     render()
     await screen.findByText('ITEM_1001')
     fireEvent.contextMenu(screen.getByText('混沌圣物'))
-    await userEvent.click(screen.getByRole('menuitem', { name: 'GPT 번역' }))
-    await userEvent.click(screen.getByRole('button', { name: '번역' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'DeepL 번역' }))
+    await userEvent.click(await screen.findByRole('button', { name: '번역' }))
     expect(await screen.findByText('이 행은 이미 번역 중입니다. 끝난 뒤에 다시 시도하세요.')).toBeInTheDocument()
     expect(screen.getByRole('gridcell', { name: '3행 Fix' })).toHaveTextContent('혼돈의 성물')
   })
@@ -311,6 +336,7 @@ describe('WorkspacePage', () => {
     render()
     await screen.findByText('ITEM_1001')
     await userEvent.click(screen.getByRole('button', { name: '×3' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: '같은 행 보기' }))
     const banner = await screen.findByRole('status', { name: '같은 원문 모아 보기' })
     expect(banner).toHaveTextContent('确认')
     expect(screen.getByTestId('location')).toHaveTextContent('/review/1?dup=')
@@ -336,6 +362,7 @@ describe('WorkspacePage', () => {
     await screen.findByText('ITEM_1001')
     await userEvent.click(screen.getByRole('gridcell', { name: '3행 Fix' }))
     await userEvent.click(screen.getByRole('button', { name: '×3' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: '같은 행 보기' }))
     await waitFor(() => expect(screen.queryByText('ITEM_1001')).not.toBeInTheDocument())
     await userEvent.click(screen.getByText('UI_CONFIRM'))   // 모아 보기 안에서 다른 칸을 골라도
     await userEvent.click(screen.getByRole('button', { name: '전체 보기' }))
@@ -360,12 +387,78 @@ describe('WorkspacePage', () => {
     await waitFor(() => expect(screen.getByRole('region', { name: '선택한 칸 내용' })).toHaveTextContent('3행 · 수정 한국어 (Fix)'))
   })
 
+  it('검색할 칸을 기존 한국어로 고르면 기존 한국어에서만 찾는다(qIn=EXISTING_KO)', async () => {
+    const { calls } = mockFetch(routes())
+    render()
+    await screen.findByText('ITEM_1001')
+    // 검색어가 없을 때는 qIn을 보내지 않는다
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: '검색할 칸' }), 'EXISTING_KO')
+    expect(calls.some((c) => c.url.includes('qIn='))).toBe(false)
+    const box = screen.getByRole('searchbox', { name: '검색' })
+    expect(box).toHaveAttribute('placeholder', '기존 한국어에서 검색')
+    await userEvent.type(box, '심판')
+    await waitFor(() => expect(calls.some((c) => c.url.includes('q=' + encodeURIComponent('심판')) && c.url.includes('qIn=EXISTING_KO'))).toBe(true))
+  })
+
+  it('모아 보기는 찾을 칸을 원문 그대로로 바꾼다 (기존 한국어를 골라 두었어도)', async () => {
+    const dupRows = [{ ...rows[0], dupCount: 3 }, rows[1]]
+    const { calls } = mockFetch([
+      { path: /\/review\/1\/rows\?sheet=UI.*q=/, body: { rows: [dupRows[0]], page: 0, size: 500, total: 1 } },
+      { path: /\/review\/1\/rows\?sheet=UI/, body: { rows: dupRows, page: 0, size: 500, total: 2 } },
+      ...routes(),
+    ])
+    render()
+    await screen.findByText('ITEM_1001')
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: '검색할 칸' }), 'EXISTING_KO')
+    await userEvent.click(screen.getByRole('button', { name: '×3' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: '같은 행 보기' }))
+    await waitFor(() => expect(calls.some((c) => c.url.includes('q=' + encodeURIComponent('确认')))).toBe(true))
+    expect(calls.some((c) => c.url.includes('q=' + encodeURIComponent('确认')) && c.url.includes('qIn=EXISTING_KO'))).toBe(false)
+    expect(calls.some((c) => c.url.includes('q=' + encodeURIComponent('确认')) && c.url.includes('qIn=SRC_EXACT'))).toBe(true)
+    expect(screen.getByRole('combobox', { name: '검색할 칸' })).toHaveValue('SRC_EXACT')
+  })
+
   // 뒤로 가기는 주소의 ?dup=이 바뀌는 것 — 주소에 dup이 있으면 모아 보기, 없어지면 푼다.
   it('주소에 dup이 있으면 그 원문으로 모아 보기를 연다 (뒤로 가기·새로 고침)', async () => {
     const { calls } = mockFetch(routes())
     renderWithProviders(<WorkspacePage />, { route: '/review/1?dup=' + encodeURIComponent('确认'), path: '/review/:id' })
     expect(await screen.findByRole('status', { name: '같은 원문 모아 보기' })).toHaveTextContent('确认')
     await waitFor(() => expect(calls.some((c) => c.url.includes('q=' + encodeURIComponent('确认')))).toBe(true))
+  })
+
+  // 모아 보기는 원문 포함 검색이 아니라 원문이 글자 그대로 같은 행만 — 원문을 품은 긴 문장이나 Fix에만 든 행은 안 나온다
+  it('모아 보기는 원문이 글자 그대로 같은 행만 찾고, 다른 칸을 고르면 모아 보기가 풀린다', async () => {
+    const { calls } = mockFetch(routes())
+    renderWithProviders(<WorkspacePage />, { route: '/review/1?dup=' + encodeURIComponent('确认'), path: '/review/:id' })
+    await screen.findByRole('status', { name: '같은 원문 모아 보기' })
+    await waitFor(() => expect(calls.some((c) => c.url.includes('q=' + encodeURIComponent('确认')) && c.url.includes('qIn=SRC_EXACT'))).toBe(true))
+    const field = screen.getByRole('combobox', { name: '검색할 칸' })
+    expect(field).toHaveValue('SRC_EXACT')
+    await userEvent.selectOptions(field, 'DEFAULT')
+    await waitFor(() => expect(screen.queryByRole('status', { name: '같은 원문 모아 보기' })).not.toBeInTheDocument())
+    expect(screen.getByRole('combobox', { name: '검색할 칸' })).toHaveValue('DEFAULT')
+    expect(screen.queryByRole('option', { name: '원문 그대로' })).not.toBeInTheDocument()
+  })
+
+  // 칩 메뉴의 "포함된 전체 행 보기"는 원문에 그 글이 든 행을 모두 — 주소에 dupIn=contains로 남는다
+  it('포함된 전체 행 보기는 원문 포함으로 찾고 주소에 남는다', async () => {
+    const dupRows = [{ ...rows[0], dupCount: 3 }, rows[1]]
+    const { calls } = mockFetch([
+      { path: /\/review\/1\/rows\?sheet=UI.*q=/, body: { rows: [dupRows[0]], page: 0, size: 500, total: 1 } },
+      { path: /\/review\/1\/rows\?sheet=UI/, body: { rows: dupRows, page: 0, size: 500, total: 2 } },
+      ...routes(),
+    ])
+    render()
+    await screen.findByText('ITEM_1001')
+    await userEvent.click(screen.getByRole('button', { name: '×3' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: '포함된 전체 행 보기' }))
+    expect(await screen.findByRole('status', { name: '원문 포함 모아 보기' })).toHaveTextContent('确认')
+    expect(screen.getByTestId('location')).toHaveTextContent('dupIn=contains')
+    await waitFor(() => expect(calls.some((c) => c.url.includes('q=' + encodeURIComponent('确认')) && c.url.includes('qIn=SRC_CONTAINS'))).toBe(true))
+    expect(screen.getByRole('combobox', { name: '검색할 칸' })).toHaveValue('SRC_CONTAINS')
+    await userEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    await waitFor(() => expect(screen.queryByRole('status', { name: '원문 포함 모아 보기' })).not.toBeInTheDocument())
+    expect(screen.getByRole('combobox', { name: '검색할 칸' })).toHaveValue('DEFAULT')
   })
 
   it('모아 보기 중에 검색어를 직접 바꾸면 안내 줄이 사라지고 주소에서 dup이 빠진다', async () => {
@@ -426,7 +519,7 @@ describe('WorkspacePage', () => {
 
     // 다른 검토자(또는 다른 탭)가 같은 행을 먼저 저장했다는 SSE 이벤트가 온다
     const es = FakeEventSource.instances[0]
-    const seg = { id: 11, indexLabel: 'UI!3', srcText: '混沌圣物', enText: 'Chaos Relic', isTerm: false, currentText: '다른 사람 값', lenKo: 5, lenSrc: 4, flagged: false, history: [] }
+    const seg = { id: 11, indexLabel: 'UI!3', srcText: '混沌圣物', enText: 'Chaos Relic', currentText: '다른 사람 값', lenKo: 5, lenSrc: 4, flagged: false, history: [] }
     act(() => { es.emit('review', { type: 'segment-updated', by: 99, row: seg }) })
 
     await waitFor(() => expect(cell).toHaveTextContent('다른 사람 값'))

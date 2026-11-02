@@ -15,9 +15,9 @@ description: 기능 구현·버그 수정을 마치면(테스트 통과 뒤, 커
 .claude/skills/local-preview/up.sh /review/54 --keep-db   # DB 복사본을 다시 만들지 않음(빠름)
 ```
 
-- 띄우는 것: DB 복사본 5433, 조사 사이드카 8009(지금 `josa/` 코드), 백엔드 8081(지금 작업 트리, `bootRun`), 프론트 5178.
+- 띄우는 것: DB 복사본 5433, 조사 사이드카 8009(지금 `josa/` 코드), 백엔드 8081(지금 작업 트리, Docker가 아니라 맥에서 `gradlew bootRun`), 프론트 5173(맥에서 vite — compose 프론트 컨테이너는 멈춰 둔다).
 - 데이터는 로컬 compose postgres(5432)를 그대로 복사한 것 — 프로드가 아니고 마지막으로 `deploy/pull-prod-db.sh`를 돌린 시점의 데이터다.
-- 새 마이그레이션은 복사본에만 적용된다. 로컬 compose 스택(5432·8080·5173)은 건드리지 않는다.
+- 새 마이그레이션은 복사본에만 적용된다. compose postgres·백엔드(5432·8080)는 건드리지 않고, 프론트 컨테이너만 멈췄다가 down.sh가 다시 켠다.
 - OpenAI·DeepL 키는 로컬 compose 백엔드 컨테이너에서 가져온다. GPT 기능을 누르면 실제 비용이 든다.
 - 처음엔 백엔드 빌드·기동에 1~2분 걸린다. 오래 걸리면 Bash의 `run_in_background`로 돌린다.
 

@@ -42,14 +42,14 @@ class ExistingKoNormalizeTest extends IntegrationTest {
     }
 
     @Test
-    void statsSeparateKeptAndIntentionallyUntranslatedRows() throws Exception {
+    void statsSeparateKeptAndSkippedRows() throws Exception {
         long pid = TestProjects.uploadExistingKo(mvc);
         mvc.perform(put("/api/projects/{id}/normalize", pid).contentType(MediaType.APPLICATION_JSON).content(TestProjects.EXISTING_KO_NORMALIZE))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.stats.totalRows").value(6))
                 .andExpect(jsonPath("$.stats.normalized").value(4))   // 2, 4, 5, 7행
-                .andExpect(jsonPath("$.stats.skipped").value(2))      // 3행(의도적 N/A) + 6행(원문 none)
-                .andExpect(jsonPath("$.stats.intentional").value(1))  // 3행
+                .andExpect(jsonPath("$.stats.skipped").value(2))      // 3행(원문 无) + 6행(원문 none)
+                .andExpect(jsonPath("$.stats.intentional").value(0))  // 영어·한국어 N/A만으로는 건너뛰지 않는다
                 .andExpect(jsonPath("$.stats.kept").value(1))         // 2행
                 .andExpect(jsonPath("$.stats.withEn").value(3))       // N/A 영어는 세지 않는다
                 .andExpect(jsonPath("$.configs[0].config.retranslateExisting").value(false))
@@ -61,6 +61,31 @@ class ExistingKoNormalizeTest extends IntegrationTest {
                 .andExpect(jsonPath("$.preview[1].existingKoText").value("N/A"))
                 .andExpect(jsonPath("$.preview[2].indexLabel").value("Skill!5"))
                 .andExpect(jsonPath("$.preview[3].indexLabel").value("Skill!7"));
+    }
+
+    @Test
+    void sourceWithNaEnglishAndKoreanIsStillTranslatedAndExported() throws Exception {
+        long pid = TestProjects.uploadUntranslatedNa(mvc);
+        mvc.perform(put("/api/projects/{id}/normalize", pid).contentType(MediaType.APPLICATION_JSON).content(TestProjects.EXISTING_KO_NORMALIZE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stats.normalized").value(2))
+                .andExpect(jsonPath("$.stats.skipped").value(0))
+                .andExpect(jsonPath("$.stats.intentional").value(0))
+                .andExpect(jsonPath("$.stats.kept").value(0));
+        mvc.perform(post("/api/projects/{id}/translate", pid).contentType(MediaType.APPLICATION_JSON).content("{\"basis\":\"CN_ONLY\"}"))
+                .andExpect(status().isOk());
+        FakeLlmClient fake = (FakeLlmClient) llm;
+        assertThat(fake.translateCalls.get(0).rows()).extracting(r -> r.index()).containsExactly("Skill!2", "Skill!3");
+        assertThat(fake.translateCalls.get(0).rows()).allSatisfy(r -> assertThat(r.en()).isNull());
+        byte[] body = mvc.perform(post("/api/projects/{id}/export", pid).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"addFlagColumn\":false,\"addHistorySheet\":false,\"addGlossarySheet\":false,\"ratio\":1.0}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(body))) {
+            var sheet = wb.getSheet("Skill");
+            assertThat(sheet.getRow(1).getCell(3).getStringCellValue()).isEqualTo("KO:风暴女王");
+            assertThat(sheet.getRow(2).getCell(3).getStringCellValue()).isEqualTo("KO:对当前目标造成伤害");
+        }
     }
 
     @Test
@@ -102,7 +127,7 @@ class ExistingKoNormalizeTest extends IntegrationTest {
     }
 
     @Test
-    void exportLeavesKeptAndIntentionalCellsUntouched() throws Exception {
+    void exportLeavesKeptAndSkippedCellsUntouched() throws Exception {
         long pid = normalized();
         mvc.perform(post("/api/projects/{id}/translate", pid).contentType(MediaType.APPLICATION_JSON).content("{\"basis\":\"CN_ONLY\"}"))
                 .andExpect(status().isOk());
@@ -113,7 +138,7 @@ class ExistingKoNormalizeTest extends IntegrationTest {
         try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(body))) {
             var sheet = wb.getSheet("Skill");
             assertThat(sheet.getRow(1).getCell(3).getStringCellValue()).isEqualTo("정의의 심판");            // 기존 번역 유지
-            assertThat(sheet.getRow(2).getCell(3).getStringCellValue()).isEqualTo("N/A");                  // 의도적 N/A 유지
+            assertThat(sheet.getRow(2).getCell(3).getStringCellValue()).isEqualTo("N/A");                  // 원문 无 → 손대지 않음
             assertThat(sheet.getRow(3).getCell(3).getStringCellValue()).isEqualTo("KO:伤害减免提升至@10%@"); // N/A → 번역
             assertThat(sheet.getRow(4).getCell(3).getStringCellValue()).isEqualTo("KO:技能伤害提升至@420%@"); // 빈칸 → 번역
             assertThat(sheet.getRow(5).getCell(3).getStringCellValue()).isEqualTo("None");                 // 원문 none → 손대지 않음

@@ -87,7 +87,7 @@ public class RowShortenService {
      * 빈 값·중복·자리표시자를 바꾼 것·글자 수가 줄지 않은 것(띄어쓰기만 뺀 것 등)은 버린다.
      * 자리표시자는 원문이 아니라 줄이는 대상(ko)과 맞춘다.
      */
-    static List<ShortenCandidate> candidates(String ko, List<String> options) {
+    public static List<ShortenCandidate> candidates(String ko, List<String> options) {
         int len = LengthCheck.count(ko);
         Set<String> seen = new LinkedHashSet<>();
         for (String o : options) {

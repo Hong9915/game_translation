@@ -22,17 +22,23 @@ public class CommandPresetService {
     }
 
     @Transactional(readOnly = true)
-    public List<PresetDto> list(Long projectId) {
-        return presets.findByGameIdOrderByNameAsc(runner.gameId(projectId)).stream().map(CommandPresetService::dto).toList();
+    public List<PresetDto> list(Long projectId) { return listForGame(runner.gameId(projectId)); }
+
+    /** 저장 명령은 게임 단위라 게임 화면도 같은 목록을 쓴다. */
+    @Transactional(readOnly = true)
+    public List<PresetDto> listForGame(Long gameId) {
+        return presets.findByGameIdOrderByNameAsc(gameId).stream().map(CommandPresetService::dto).toList();
     }
 
     @Transactional
-    public PresetDto create(Long projectId, CreateRequest req, Long reviewerId) {
+    public PresetDto create(Long projectId, CreateRequest req, Long reviewerId) { return createForGame(runner.gameId(projectId), req, reviewerId); }
+
+    @Transactional
+    public PresetDto createForGame(Long gameId, CreateRequest req, Long reviewerId) {
         String name = req.name() == null ? "" : req.name().strip();
         if (name.isEmpty()) throw new IllegalArgumentException("이름을 적어 주세요.");
         if (name.length() > MAX_NAME) throw new IllegalArgumentException("이름이 너무 깁니다.");
         Pipeline.compile(req.ops());
-        Long gameId = runner.gameId(projectId);
         if (presets.existsByGameIdAndName(gameId, name)) throw new IllegalArgumentException("같은 이름의 명령이 있습니다: " + name);
         CommandPreset p = new CommandPreset();
         p.setGameId(gameId);
@@ -43,8 +49,11 @@ public class CommandPresetService {
     }
 
     @Transactional
-    public void delete(Long projectId, Long presetId) {
-        CommandPreset p = presets.findByIdAndGameId(presetId, runner.gameId(projectId))
+    public void delete(Long projectId, Long presetId) { deleteForGame(runner.gameId(projectId), presetId); }
+
+    @Transactional
+    public void deleteForGame(Long gameId, Long presetId) {
+        CommandPreset p = presets.findByIdAndGameId(presetId, gameId)
                 .orElseThrow(() -> new NotFoundException("저장 명령을 찾을 수 없습니다: " + presetId));
         presets.delete(p);
     }

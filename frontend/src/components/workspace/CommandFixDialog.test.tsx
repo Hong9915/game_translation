@@ -29,7 +29,7 @@ const routes = (plan: unknown = fixPlan, extra: MockRoute[] = []): MockRoute[] =
   { method: 'POST', path: '/review/7/command-presets', body: { id: 6, name: '구미호 정리', ops: fixPlan.ops } },
   { method: 'POST', path: '/review/7/marks', body: { updated: 1 } },
 ]
-const render = (onFixed = vi.fn()) => { renderWithProviders(<CommandFixDialog projectId={7} sheet="Skill" onFixed={onFixed} onClose={vi.fn()} />); return { onFixed } }
+const render = (onFixed = vi.fn()) => { renderWithProviders(<CommandFixDialog target={{ kind: 'project', projectId: 7, sheet: 'Skill' }} label="Skill" onFixed={onFixed} onClose={vi.fn()} />); return { onFixed } }
 const ask = async (command = '구미호를 여우로 바꾸고 조사도 맞춰줘') => {
   await userEvent.type(screen.getByRole('textbox', { name: '명령' }), command)
   await userEvent.click(screen.getByRole('button', { name: '미리 보기' }))
@@ -64,8 +64,9 @@ describe('CommandFixDialog', () => {
   it('창을 닫아도 실행은 끝까지 돌고, 다시 열면 결과와 명령이 그대로 있다', async () => {
     mockFetch(routes())
     let answer!: (p: CommandPlan) => void
-    const spy = vi.spyOn(api.workspace, 'commandPlan').mockReturnValueOnce(new Promise<CommandPlan>((res) => { answer = res }))
-    const first = renderWithProviders(<CommandFixDialog projectId={7} sheet="Skill" onFixed={vi.fn()} onClose={vi.fn()} />)
+    const real = api.review
+    const spy = vi.spyOn(api, 'review').mockImplementation((t) => ({ ...real(t), commandPlan: () => new Promise<CommandPlan>((res) => { answer = res }) }))
+    const first = renderWithProviders(<CommandFixDialog target={{ kind: 'project', projectId: 7, sheet: 'Skill' }} label="Skill" onFixed={vi.fn()} onClose={vi.fn()} />)
     await userEvent.type(screen.getByRole('textbox', { name: '명령' }), '구미호를 여우로')
     await userEvent.click(screen.getByRole('button', { name: '미리 보기' }))
     first.unmount()                                                    // 결과가 오기 전에 닫는다
@@ -82,8 +83,9 @@ describe('CommandFixDialog', () => {
   it('다른 시트의 실행 결과는 보이지 않고, 본 것으로 치지도 않는다', async () => {
     mockFetch(routes())
     let answer!: (p: CommandPlan) => void
-    const spy = vi.spyOn(api.workspace, 'commandPlan').mockReturnValueOnce(new Promise<CommandPlan>((res) => { answer = res }))
-    const first = renderWithProviders(<CommandFixDialog projectId={7} sheet="Item" onFixed={vi.fn()} onClose={vi.fn()} />)
+    const real = api.review
+    const spy = vi.spyOn(api, 'review').mockImplementation((t) => ({ ...real(t), commandPlan: () => new Promise<CommandPlan>((res) => { answer = res }) }))
+    const first = renderWithProviders(<CommandFixDialog target={{ kind: 'project', projectId: 7, sheet: 'Item' }} label="Item" onFixed={vi.fn()} onClose={vi.fn()} />)
     await userEvent.click(screen.getByRole('button', { name: '조사 맞추기' }))
     first.unmount()
     answer(fixPlan as CommandPlan)
@@ -196,5 +198,31 @@ describe('CommandFixDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: '조사 맞추기' }))
     expect(await screen.findByText('구미호를 여우로 바꾸고 조사를 맞춥니다.')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('길이 줄이기: 진행을 보이고, 글자 수로 비교하며, 규칙 편집·저장 없이 고친다', async () => {
+    const { calls } = mockFetch(routes())
+    const real = api.review
+    let release!: () => void
+    const gate = new Promise<void>((res) => { release = res })
+    const row = { segmentId: 31, rowNo: 2, src: '陷阱伤害', before: '함정에 의해 받는 피해량', after: '함정 피해', by: ['SHORTEN'], warnings: [], mismatch: null, target: 8 }
+    vi.spyOn(api, 'review').mockImplementation((t) => ({ ...real(t), commandPlan: async (body: { check?: string }) => {
+      if (body.check === 'OVER_LENGTH') return { summary: null, kind: 'CHECK', ops: null, trail: [], rows: [row] } as CommandPlan
+      await gate
+      return { summary: null, kind: 'FIX', ops: [{ kind: 'SHORTEN' }], trail: [], rows: [row] } as CommandPlan
+    } }))
+    render()
+    await userEvent.click(screen.getByRole('button', { name: '전체 길이 줄이기' }))
+    expect(await screen.findByText('GPT로 줄이는 중… 0 / 1행')).toBeInTheDocument()
+    release()
+    expect(await screen.findByText('길이 기준을 넘는 1행 가운데 1행을 줄였습니다.')).toBeInTheDocument()
+    expect(screen.getByTestId('length')).toHaveTextContent('10 → 4자 (목표 8)')
+    expect(screen.queryByRole('button', { name: '규칙 고치기' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '이 작업 저장' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: '1행 고치기' }))
+    expect(calls.find((c) => c.url.endsWith('/command-fix') && c.method === 'POST')?.body).toEqual({
+      sheet: 'Skill', command: '전체 길이 줄이기', ops: [{ kind: 'SHORTEN' }],
+      items: [{ segmentId: 31, before: '함정에 의해 받는 피해량', after: '함정 피해' }],
+    })
   })
 })

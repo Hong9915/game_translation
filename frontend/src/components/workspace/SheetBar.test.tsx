@@ -120,4 +120,13 @@ describe('SheetBar', () => {
       expect(screen.queryByRole('button', { name: '불일치 다시 계산' })).not.toBeInTheDocument()
     })
   })
+
+  it('최종 수정 필터는 최종 리뷰 시트에서만', () => {
+    const props = { sheets, active: 'UI', filter: 'ALL' as const, q: '', hasReviewer: false, onSheet: vi.fn(), onFilter: vi.fn(), onSearch: vi.fn() }
+    const { rerender } = render(<SheetBar {...props} />)
+    expect(screen.queryByRole('option', { name: '최종 수정 표시' })).toBeNull()
+    rerender(<SheetBar {...props} finalReview />)
+    expect(screen.getByRole('option', { name: '최종 수정 표시' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '최종 수정 안 함' })).toBeInTheDocument()
+  })
 })
