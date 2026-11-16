@@ -1,38 +1,52 @@
 # 게임 번역 검수 도구
 
 중국어(간체) 게임 텍스트를 한국어로 옮긴 엑셀 파일을 **팀이 함께 검수하고 고치는 웹 도구**.
-파일을 올리면 엑셀처럼 생긴 화면에서 원문·기존 번역·고친 번역을 나란히 보고, 용어 통일·조사·띄어쓰기 같은
+파일을 올리면 엑셀처럼 생긴 화면에서 원문·기존 번역·고친 번역을 나란히 보고, 용어 통일·조사·띄어쓰기·문체 같은
 반복 수정은 도구와 GPT에 맡긴 뒤, 원본 형식 그대로 한국어 열이 채워진 xlsx를 내려받는다.
 
 ```mermaid
 flowchart LR
   A[게임 고르기] --> B["파일 올리기<br/>xlsx·csv, 폴더째"] --> C["열 정하기<br/>원문·한국어 열"] --> D[엑셀식 검수] --> E["내보내기<br/>xlsx·zip"]
-  D -.- T["단어장 · 표기 갈림 · 조사 검사<br/>명령으로 고치기 · 변경 내역"]
+  D -.- T["단어장 · 표기 갈림 · 조사 검사<br/>명령으로 고치기 · 교정 규칙 · 변경 내역"]
 ```
 
 ## 무엇을 할 수 있나
 
 **엑셀식 검수 화면** (`/review/:id`, 게임 전체는 `/games/:gameId/review`)
 - 시트·페이지 단위 그리드. 칸을 고쳐 바로 저장하고, 같은 파일을 연 사람끼리 실시간으로 보인다(SSE).
-- 검수 표시: 1차·2차·확인 필요·비고·**확정**. 확정한 행은 일괄 수정 도구가 건드리지 않는다.
+- 엑셀처럼 범위를 드래그로 골라 복사·붙여넣기하고, **Ctrl+Z / Ctrl+Y**로 되돌리고 다시 한다.
+  붙여넣기·일괄 수정은 한 단위로 되돌린다. 표 위 입력줄은 높이를 끌어 바꾼다.
+- 범위 우클릭: 원문 범위를 **DeepL·GPT로 다시 번역**하거나, 고친 번역 범위를 **GPT로 다듬어** 전·후를 보고 고른 행만 넣는다.
+  게임마다 GPT 번역·다듬기에 덧붙일 지시문을 둔다.
+- 검수 표시: 체크 A·B·C · 확인 필요 · 비고 · **확정**. 확정한 행은 일괄 수정 도구가 건드리지 않는다.
 - 최종 리뷰 레인: 최종 리뷰에서 고친 칸을 따로 표시하고, 최종 수정분만 골라 내보낼 수 있다.
 - 필터: 수정됨 · 확정 안 함 · 확인 필요 · 내 담당 · 용어 불일치 · 조사 확인 · 동일 원문 불일치 · Fix 비어 있음 등.
 - 행마다 고친 사람·이력, 같은 원문 모아 보기(×N), 길이 초과 줄이기(GPT 후보), 셀 우클릭 번역.
 - **변경 내역** 패널: 누가 무엇을 고쳤는지 시간순으로 보고, 일괄 수정은 한 번에 되돌린다.
 - 게임 전체 검수: 게임의 모든 파일을 한 화면에서 보고, 전체 파일을 zip으로 내보낸다.
+- **게임 메모**: 검수 화면 메모 버튼으로 새 창을 열어 팀이 함께 쓰는 게임별 메모(서식 있는 편집기, 자동 저장).
 
 **용어 통일**
 - 게임마다 **단어장**(확정 용어)을 두고, 검수 화면 옆 패널에서 보고 고치고 일괄 적용한다. 단어장은 DeepL 번역에도 용어집으로 들어간다.
 - **단어장 요청양식**: 요청 파일을 올리면 기존 표기와 대조하고 GPT 초안을 붙여, 한 표에서 승인한다.
+  GPT가 실제 행을 열어 보고 지금 쓰인 표기를 골라 주는 "표기 확인"도 있다.
 - 같은 원문이 여러 행에 있으면 한 곳을 고칠 때 나머지도 맞춘다(동일 원문 동기화).
 - **표기 갈림** 화면: 같은 중국어 구절이 여러 한국어로 옮겨진 곳을 찾아 고유명사·수치·문법 조각 등으로 나눠 보여 준다.
 - 예전 표기가 남아 있는 행을 찾아 새 확정 용어로 바꿀 것을 제안한다.
 
 **자동 검사·일괄 수정**
 - **조사 검사**: 용어를 바꾼 뒤 어긋난 조사(을/를, 이/가, 으로/로…)를 한국어 형태소 분석기(Kiwi)로 찾아 고칠 것을 제안한다.
-- **태그 띄어쓰기**: `<color>`·`{0}` 같은 태그·자리표시자 앞뒤 띄어쓰기를 시트 단위로 맞춘다.
-- **명령으로 고치기**: "구미호를 여우로 바꾸고 조사도 맞춰줘"처럼 적으면 GPT가 도구(찾아 바꾸기·조사 맞추기·태그 띄어쓰기·같은 원문 통일)로
-  시트에 시험해 본 뒤 변경 전·후를 보여 주고, 고른 행만 고친다. 태그·자리표시자 안쪽은 바꾸지 않는다.
+- **명령으로 고치기**: "구미호를 여우로 바꾸고 조사도 맞춰줘"처럼 적으면 GPT가 도구(찾아 바꾸기·용어 바꾸기·조사 맞추기·태그 띄어쓰기·
+  같은 원문 통일·길이 줄이기)로 시트에 시험해 본 뒤 변경 전·후를 보여 주고, 고른 행만 고친다. 태그·자리표시자 안쪽은 바꾸지 않는다.
+
+**교정 규칙** (`/games/:gameId/rules`, 검수 화면 위 막대의 버튼) — 게임 전체에서 기계적으로 고칠 곳을 찾아 미리 보기로 고른 행만 고친다.
+- **문체: 서술식 → 개조식**. "~습니다·~하세요·~한다"가 남은 행을 글 종류(효과·아이템·퀘스트·시스템 알림·도움말·이야기·UI…)별로 찾아
+  "~함·~됨·명사"로 바꾼다. 대사·공지·메일은 바꾸지 않는다. 글 종류는 GPT가 행마다 한 번 판단해 저장한다(그 버튼만 비용이 든다).
+  사람이 손으로 고친 기록이 있으면 그 종류에서 바꾼 비율을 참고로 보여 준다.
+- **줄 끝 마침표 빼기**: 줄바꿈(`<br>`·줄바꿈)이나 글 끝 바로 앞의 "." 하나만 지운다. 말줄임표·소수점은 그대로.
+- **태그 띄어쓰기**: `<color>` 같은 태그 앞뒤에 붙은 낱말을 Kiwi 띄어쓰기로 보고 띄워야 할 경계에만 공백을 넣는다.
+- 미리 보기는 같은 글을 ×N으로 묶고, 전체 선택·파일 거르기·줄마다 직접 고치기가 된다. 적용은 변경 내역에 남아 되돌릴 수 있다.
+  기계 변환이 안 된 문체 행만 "GPT로 고치기"로 다시 쓸 수 있다.
 
 **번역**
 - 기본 번역 엔진은 **DeepL**이다. 게임 단어장을 DeepL 용어집으로, 게임별 지시문을 함께 보낸다.
@@ -46,10 +60,10 @@ flowchart LR
 flowchart LR
   U[브라우저<br/>React 19] -->|요청| N["nginx<br/>HTTPS · 팀 비밀번호"]
   N -->|/api| B["Spring Boot 백엔드<br/>검수 API · 작업 실행기 · xlsx"]
-  B -->|모든 데이터| P[("PostgreSQL 16<br/>Flyway V1–V30")]
+  B -->|모든 데이터| P[("PostgreSQL 16<br/>Flyway V1–V35")]
   B ==>|기본 번역| D["DeepL Pro<br/>단어장 용어집 · 게임별 지시문"]
-  B -->|명령으로 고치기 · 길이 줄이기 · 단어장 초안| O[OpenAI<br/>gpt-5 · gpt-5-mini]
-  B -->|조사 검사 · 내부망| J["josa 사이드카<br/>Python · Kiwi"]
+  B -->|명령으로 고치기 · 다듬기 · 글 종류 판단 · 단어장 초안| O[OpenAI<br/>gpt-5 · gpt-5-mini]
+  B -->|조사 검사 · 태그 띄어쓰기 · 내부망| J["josa 사이드카<br/>Python · Kiwi"]
   B -->|원본 보관| S[("파일 저장소<br/>STORAGE_TYPE=local")]
   B -.->|SSE: 다른 사람이 고친 칸 · 작업 진행률| U
 ```
@@ -70,6 +84,7 @@ flowchart TD
   U["업로드 → 원본 파일<br/><code>project · storage</code>"] --> N["열 정하기 → segments 행<br/><code>normalize · xlsx</code>"]
   N --> T["번역 → 빈 한국어 채움<br/><code>job · translate · deepl</code>"]
   T --> R["검수 → 고친 한국어 · 표시<br/><code>workspace · review · command · josa · activity</code>"]
+  C["교정 규칙 → 문체 · 마침표 · 태그 띄어쓰기<br/><code>rules · josa</code>"] -->|미리 보기 → 적용| R
   R --> E["내보내기 → .xlsx · .zip<br/><code>export · xlsx</code>"]
   G[("단어장<br/><code>glossary</code>")] -->|DeepL 용어집| T
   G -->|일괄 적용 · 불일치 필터| R
@@ -77,17 +92,17 @@ flowchart TD
   E -->|최종 문장| M[("번역 메모리<br/><code>memory</code>")]
 ```
 
-모든 단계가 같은 `segments` 행을 읽고 쓴다. 검수 단계의 일괄 수정(명령으로 고치기·조사 맞추기·단어장 적용)은 확정된 행을 건너뛰고,
+모든 단계가 같은 `segments` 행을 읽고 쓴다. 검수 단계의 일괄 수정(명령으로 고치기·조사 맞추기·단어장 적용·교정 규칙)은 확정된 행을 건너뛰고,
 변경 내역에 묶음으로 남아 한 번에 되돌릴 수 있다.
 
 ### 백엔드 패키지 (`backend/src/main/java/com/gametrans`)
 
 | 단계·역할 | 패키지 |
 |---|---|
-| 게임·파일 | `game`(게임, DeepL 지시문) · `project`(올린 파일) · `storage`(원본 저장: local/Supabase) |
+| 게임·파일 | `game`(게임, DeepL·GPT 지시문, 게임 메모) · `project`(올린 파일) · `storage`(원본 저장: local/Supabase) |
 | 열 정하기 | `normalize`(열 쌍 → `segments` 행) · `xlsx`(읽기·쓰기·열 추측·CSV) |
-| 번역 | `job`(백그라운드 작업·진행 SSE) · `translate`(파일·행·빠른 번역, 길이 줄이기, 수정 이력) · `deepl` · `llm`(OpenAI·tool loop·사용량) · `memory`(번역 메모리) |
-| 검수 | `workspace`(그리드 조회, 게임 전체 검수) · `review`(표시·담당·동일 원문 동기화·실시간·접속자) · `reviewer` · `command`(명령으로 고치기·전체 길이 줄이기) · `josa`(조사 검사·태그 띄어쓰기) · `activity`(변경 내역·되돌리기) |
+| 번역 | `job`(백그라운드 작업·진행 SSE) · `translate`(파일·행·빠른 번역, 여러 행 다시 번역·GPT 다듬기, 길이 줄이기, 수정 이력) · `deepl` · `llm`(OpenAI·tool loop·사용량) · `memory`(번역 메모리) |
+| 검수 | `workspace`(그리드 조회, 게임 전체 검수) · `review`(표시·담당·동일 원문 동기화·실시간·접속자) · `reviewer` · `command`(명령으로 고치기·전체 길이 줄이기) · `josa`(조사 검사·태그 띄어쓰기) · `rules`(교정 규칙: 글 종류 판단·문체 변환·마침표·미리 보기·적용) · `activity`(변경 내역·되돌리기·Ctrl+Z) |
 | 용어 | `glossary`(단어장·분류·표기 갈림·추천·요청양식) · `text`(용어·조사·길이·자리표시자 검사) |
 | 내보내기 | `export`(xlsx·zip, 최종 수정분만, 내보낸 버전) |
 | 공통 | `config` · `common` · `health` |
@@ -99,8 +114,10 @@ flowchart TD
 | 게임 목록 `/` | `/api/games` | game |
 | 게임 화면 `/games/:gameId` | `/api/games`, `/api/projects`, `/api/games/{id}/jobs`, `/api/games/{id}/quick-translate` | game · project · job · translate · glossary |
 | 열 정하기 `/normalize/:id` | `/api/projects/{id}` | normalize · xlsx |
-| 검수 그리드 `/review/:id` | `/api/review/{projectId}/…` (rows · command-fix · josa · tag-spacing · activity), `/api/projects/{id}/presence` | workspace · review · command · josa · activity · glossary |
+| 검수 그리드 `/review/:id` | `/api/review/{projectId}/…` (rows · command-fix · josa · activity), `/api/segments/…` (translate-batch · polish · save-batch), `/api/projects/{id}/presence` | workspace · review · command · josa · translate · activity · glossary |
 | 게임 전체 검수 `/games/:gameId/review` | `/api/games/{gameId}/review/…` | workspace |
+| 교정 규칙 `/games/:gameId/rules` | `/api/games/{gameId}/rules`(relearn · judge-kinds), `/api/rules/{id}/…`(preview · apply · rewrite), `/api/games/{gameId}/review/tag-spacing` | rules · josa |
+| 게임 메모 `/games/:gameId/memo` (새 창) | `/api/games/{id}/memo` | game |
 | 단어장 추천 `/games/:gameId/glossary/recommend` | `/api/games/{gameId}/glossary/recommend` | glossary |
 | 단어장 요청 `/games/:gameId/glossary/requests/:requestId` | `/api/games/{gameId}/glossary/requests`, `/api/glossary/requests/{id}` | glossary |
 | 내보내기 (게임·검수 화면 버튼) | `/api/projects/{id}/export` | export · xlsx |
