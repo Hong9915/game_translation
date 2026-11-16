@@ -112,6 +112,7 @@ public interface SegmentRepository extends JpaRepository<Segment, Long>, JpaSpec
         long getTotal();
         long getReview1();
         long getReview2();
+        long getReview3();
         long getNeedsCheck();
         long getConfirmed();
         long getJosa();
@@ -123,6 +124,7 @@ public interface SegmentRepository extends JpaRepository<Segment, Long>, JpaSpec
         select s.sheetName as sheet, count(s) as total,
                coalesce(sum(case when s.review1 = true then 1L else 0L end), 0L) as review1,
                coalesce(sum(case when s.review2 = true then 1L else 0L end), 0L) as review2,
+               coalesce(sum(case when s.review3 = true then 1L else 0L end), 0L) as review3,
                coalesce(sum(case when s.needsCheck = true then 1L else 0L end), 0L) as needsCheck,
                coalesce(sum(case when s.confirmed = true then 1L else 0L end), 0L) as confirmed,
                coalesce(sum(case when s.finalMark = true then 1L else 0L end), 0L) as finalMark,
@@ -174,12 +176,13 @@ public interface SegmentRepository extends JpaRepository<Segment, Long>, JpaSpec
     @Query(value = """
         update segment set review1 = coalesce(cast(:r1 as boolean), review1),
                            review2 = coalesce(cast(:r2 as boolean), review2),
+                           review3 = coalesce(cast(:r3 as boolean), review3),
                            needs_check = coalesce(cast(:nc as boolean), needs_check),
                            confirmed = coalesce(cast(:cf as boolean), confirmed),
                            final_mark = coalesce(cast(:fm as boolean), final_mark)
          where id in (:ids)
         """, nativeQuery = true)
-    int updateMarks(@Param("ids") List<Long> ids, @Param("r1") Boolean r1, @Param("r2") Boolean r2, @Param("nc") Boolean nc,
+    int updateMarks(@Param("ids") List<Long> ids, @Param("r1") Boolean r1, @Param("r2") Boolean r2, @Param("r3") Boolean r3, @Param("nc") Boolean nc,
                     @Param("cf") Boolean cf, @Param("fm") Boolean fm);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true) @Transactional

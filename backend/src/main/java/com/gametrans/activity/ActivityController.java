@@ -3,10 +3,14 @@ package com.gametrans.activity;
 import com.gametrans.activity.ActivityDtos.FeedResponse;
 import com.gametrans.activity.ActivityDtos.RevertResult;
 import com.gametrans.activity.ActivityDtos.RowsResponse;
+import com.gametrans.activity.ActivityDtos.UndoRequest;
+import com.gametrans.activity.ActivityDtos.UndoResult;
 import com.gametrans.config.Paging;
+import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -32,6 +36,12 @@ public class ActivityController {
     @PostMapping("/activity/{id}/revert")
     public RevertResult revert(@PathVariable Long id, @RequestHeader(value = "X-Reviewer-Id", required = false) Long reviewerId) {
         return service.revert(id, reviewerId);
+    }
+
+    /** Ctrl+Z/Ctrl+Y: 여러 항목을 순서대로 되돌린다. 첫 판 행은 빈 칸으로 돌리고, 만든 REVERT 항목 id를 돌려준다. */
+    @PostMapping("/activity/undo")
+    public UndoResult undo(@RequestBody UndoRequest req, @RequestHeader(value = "X-Reviewer-Id", required = false) Long reviewerId) {
+        return service.undo(req.activityIds() == null ? List.of() : req.activityIds(), reviewerId);
     }
 
     @GetMapping("/activity/{id}/rows")

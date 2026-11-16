@@ -299,4 +299,20 @@ class ActivityLogTest extends IntegrationTest {
         assertThat(f.apply(b)).isNotEqualTo(first);
         assertThat(ofProject(b)).hasSize(1);
     }
+
+    @Test
+    void saveReturnsActivityId() throws Exception {
+        long pid = normalized(TestProjects.freshGame());
+        long sid = row(pid, 2).getId();
+        String body = "{\"text\":\"완전히 새 글\"}";
+        String json = mvc.perform(put("/api/segments/{id}/translation", sid).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        Number id = JsonPath.read(json, "$.activityId");
+        assertThat(id.longValue()).isEqualTo(ofProject(pid).get(0).getId());
+        assertThat(ofProject(pid).get(0).getKind()).isEqualTo(Activity.Kind.EDIT);
+
+        String again = mvc.perform(put("/api/segments/{id}/translation", sid).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat((Object) JsonPath.read(again, "$.activityId")).isNull();
+    }
 }

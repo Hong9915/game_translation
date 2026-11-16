@@ -12,8 +12,10 @@ const SOURCE_LABEL: Record<string, string> = {
   DEEPL: 'DeepL', CACHE: 'DeepL (캐시 · 다시 사지 않음)', GLOSSARY: '단어장 (문장 통째)', MEMORY: '번역 메모리', LLM: 'GPT',
 }
 
-/** 파일 없이 문장 하나를 이 게임의 단어장·번역 메모리에 맞춰 DeepL로 번역한다. 결과는 어디에도 저장되지 않는다. */
-export function QuickTranslate({ gameId }: { gameId: number }) {
+/** 파일 없이 문장 하나를 이 게임의 단어장·번역 메모리에 맞춰 DeepL로 번역한다. 결과는 어디에도 저장되지 않는다.
+ *  collapsible이면 제목 줄만 보이다가 눌러야 펼친다(게임 화면에선 가끔 쓰는 도구라 접어 둔다). */
+export function QuickTranslate({ gameId, collapsible = false }: { gameId: number; collapsible?: boolean }) {
+  const [open, setOpen] = useState(!collapsible)
   const [text, setText] = useState('')
   const [en, setEn] = useState('')
   const [basis, setBasis] = useState<Basis>('CN_ONLY')
@@ -32,10 +34,25 @@ export function QuickTranslate({ gameId }: { gameId: number }) {
 
   return (
     <Card>
-      <div className="flex items-center justify-between px-5 py-3">
-        <span className="text-base font-semibold">한 문장 번역</span>
-        <span className="text-xs text-muted">이 게임의 단어장을 DeepL에 같이 보냅니다 · 같은 문장은 캐시 · 결과는 저장되지 않습니다</span>
-      </div>
+      {collapsible
+        ? (
+          <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)}
+            className="flex w-full items-center justify-between gap-4 rounded-xl px-5 py-3.5 text-left hover:bg-canvas">
+            <span className="flex items-center gap-2 text-[15px] font-semibold">
+              <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+                className={`text-body transition-transform duration-200 motion-reduce:transition-none ${open ? 'rotate-90' : ''}`}><path d="M9 6l6 6-6 6" /></svg>
+              한 문장 번역
+            </span>
+            <span className="text-xs text-body">단어장과 함께 DeepL로 한 줄만 · 저장 안 함</span>
+          </button>
+        )
+        : (
+          <div className="flex items-center justify-between px-5 py-3">
+            <span className="text-base font-semibold">한 문장 번역</span>
+            <span className="text-xs text-muted">이 게임의 단어장을 DeepL에 같이 보냅니다 · 같은 문장은 캐시 · 결과는 저장되지 않습니다</span>
+          </div>
+        )}
+      {open && <>
       <form className="flex flex-col gap-2 border-t border-lineSoft px-5 py-4" onSubmit={(e) => { e.preventDefault(); if (canRun) run.mutate() }}>
         <AutoTextarea aria-label="번역할 문장" className={`${inputClass} leading-relaxed`} placeholder="간체 원문 (예: 霜语者加入了队伍) · Ctrl/⌘+Enter로 번역"
           value={text} onChange={(e) => setText(e.target.value)}
@@ -73,6 +90,7 @@ export function QuickTranslate({ gameId }: { gameId: number }) {
           )}
         </div>
       )}
+      </>}
     </Card>
   )
 }

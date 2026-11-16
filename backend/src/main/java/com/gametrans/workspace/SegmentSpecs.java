@@ -62,6 +62,7 @@ public final class SegmentSpecs {
             case CHANGED -> cb.notEqual(norm(cb, root, "latestKo"), norm(cb, root, "existingKoText"));
             case NOT_REVIEW1 -> cb.isFalse(root.get("review1"));
             case NOT_REVIEW2 -> cb.isFalse(root.get("review2"));
+            case NOT_REVIEW3 -> cb.isFalse(root.get("review3"));
             case NOT_CONFIRMED -> cb.isFalse(root.get("confirmed"));
             case NEEDS_CHECK -> cb.isTrue(root.get("needsCheck"));
             case FINAL_MARK -> cb.isTrue(root.get("finalMark"));

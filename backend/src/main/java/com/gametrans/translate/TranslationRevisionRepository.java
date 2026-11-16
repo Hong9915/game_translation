@@ -15,6 +15,8 @@ public interface TranslationRevisionRepository extends JpaRepository<Translation
     List<TranslationRevision> findBySegmentIdInOrderBySegmentIdAscVersionAsc(Collection<Long> segmentIds);
     List<TranslationRevision> findByActivityIdOrderByIdAsc(Long activityId);
     @Modifying @Transactional void deleteBySegmentIdInAndAuthor(Collection<Long> segmentIds, TranslationRevision.Author author);
+    /** 되돌리기로 첫 판 행을 빈 칸으로 돌릴 때: 그 행에서 id 이상인 판을 모두 지운다(트리거가 latest_ko를 맞춘다). */
+    @Modifying @Transactional void deleteBySegmentIdAndIdGreaterThanEqual(Long segmentId, Long id);
 
     /**
      * 검토자 삭제 시 남긴 리비전의 작성자를 다른 검토자에게 옮기거나(to) 비운다(to가 null).

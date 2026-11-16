@@ -41,7 +41,7 @@ const WIDE_KEY = 'commandFix.wide'
 const loadWide = () => { try { return localStorage.getItem(WIDE_KEY) === '1' } catch { return false } }
 const storeWide = (v: boolean) => { try { localStorage.setItem(WIDE_KEY, v ? '1' : '0') } catch { /* 저장 못 해도 이번 창에서는 된다 */ } }
 /** 태그 짝을 깨는 행은 기본으로 빼 둔다. */
-const skippedByDefault = (rows: CommandRow[]) => new Set(rows.filter((r) => r.warnings.some((w) => w.kind === 'TAG')).map((r) => r.segmentId))
+const skippedByDefault = (rows: CommandRow[]) => new Set(rows.filter((r) => r.warnings.some((w) => w.kind === 'TAG' || w.kind === 'INSERT')).map((r) => r.segmentId))
 
 /**
  * 리뷰 화면의 명령으로 고치기 창(설계 2026-10-08). 명령은 GPT가 도구로 시험해 작업 목록을 내고, 도구 버튼·저장 명령은 GPT 없이 바로

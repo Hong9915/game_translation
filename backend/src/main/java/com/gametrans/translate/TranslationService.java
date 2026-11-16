@@ -198,7 +198,7 @@ public class TranslationService {
 
     /** 확인 필요를 켜고 비고에 이유를 붙인다(기존 비고는 남기고 뒤에). */
     private void flag(Segment s, String reason) {
-        segments.updateMarks(List.of(s.getId()), null, null, true, null, null);
+        segments.updateMarks(List.of(s.getId()), null, null, null, true, null, null);
         // 작업 시작 때 읽은 비고가 아니라 지금 비고 — 그 사이 검토자가 쓴 비고를 지우지 않게
         String current = segments.findById(s.getId()).map(Segment::getNote).orElse(null);
         String note = current == null || current.isBlank() ? reason : current + " · " + reason;

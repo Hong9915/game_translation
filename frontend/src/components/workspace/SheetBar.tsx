@@ -24,7 +24,7 @@ interface SheetBarProps {
   tabs?: ReactNode
 }
 
-const FILTERS: RowFilter[] = ['ALL', 'CHANGED', 'NOT_REVIEW1', 'NOT_REVIEW2', 'NOT_CONFIRMED', 'NEEDS_CHECK', 'FINAL_MARK', 'NOT_FINAL_MARK', 'MINE', 'UNASSIGNED', 'TERM_MISS', 'EMPTY_FIX', 'JOSA', 'DUP_CONFLICT']
+const FILTERS: RowFilter[] = ['ALL', 'CHANGED', 'NOT_REVIEW1', 'NOT_REVIEW2', 'NOT_REVIEW3', 'NOT_CONFIRMED', 'NEEDS_CHECK', 'FINAL_MARK', 'NOT_FINAL_MARK', 'MINE', 'UNASSIGNED', 'TERM_MISS', 'EMPTY_FIX', 'JOSA', 'DUP_CONFLICT']
 const RECOMPUTE_NOTICE_MS = 4000
 // 2026-09-27 운영에서 막아 둔 이유: 지금 있는 불일치 표시는 대부분 옛 용어 표 기준이라 단어장 기준으로 다시 계산하면
 // 거의 다 지워지고, 4.9만 행 시트는 한 번에 10분쯤 걸린다(TermMissService.recompute가 바뀐 행마다 flush한다).

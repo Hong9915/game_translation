@@ -8,8 +8,9 @@ import { ReviewerNameModal } from '../components/workspace/ReviewerNameModal'
 import ActivityPanel from '../components/workspace/ActivityPanel'
 import GlossaryPanel, { type GlossaryPanelProps } from '../components/workspace/GlossaryPanel'
 import { JosaApplyDialog } from '../components/workspace/JosaApplyDialog'
-import { TagSpacingDialog } from '../components/workspace/TagSpacingDialog'
 import { TranslateRowDialog } from '../components/workspace/TranslateRowDialog'
+import { BatchTranslateDialog } from '../components/workspace/BatchTranslateDialog'
+import { PolishDialog } from '../components/workspace/PolishDialog'
 import { CommandFixDialog } from '../components/workspace/CommandFixDialog'
 import { ExportModeDialog } from '../components/workspace/ExportModeDialog'
 import { GameZipExportDialog, type ZipFile } from '../components/workspace/GameZipExportDialog'
@@ -24,6 +25,8 @@ import { TranslateJobBar } from '../components/workspace/TranslateJobBar'
 import { PageBar, ViewSizePicker, type ViewSize } from '../components/workspace/PageBar'
 import { WorkspaceGrid, type GridPosition } from '../components/workspace/WorkspaceGrid'
 import { loadRowHeight } from '../lib/gridLayout'
+import { columnClipboard } from '../lib/gridRange'
+import { type UndoState, type UndoUnit, emptyUndo, insertPast, popFuture, popPast, pushUnit, toFuture } from '../lib/undoStack'
 import { useLinger } from '../hooks/useLinger'
 import { usePresence } from '../hooks/usePresence'
 import { useReviewer } from '../hooks/useReviewer'
@@ -40,6 +43,8 @@ const PANEL_MS = 200
 /** 변경 내역에서 행으로 갈 때 그 행 위로 보여 줄 행 수. */
 const JUMP_ROWS_ABOVE = 8
 const RATIO = 1.0
+/** 되돌리기·복사 안내를 보여 주는 시간. */
+const INFO_MS = 4000
 // 보기(전체 스크롤 / 25·50·100행 쪽 넘기기). 브라우저마다 기억한다 — 저장소가 막혀도 기본값(100행)으로 동작한다.
 const VIEW_SIZE_KEY = 'gametrans.workspaceViewSize'
 const loadViewSize = (): ViewSize => {
@@ -111,6 +116,14 @@ export function WorkspacePage() {
   // 저장할 때마다 늘어나는 값 — propagated 건수가 지난번과 같아도(2행→2행) StatusBar가 다시 4초를 보여주게 한다.
   const [propagatedSeq, setPropagatedSeq] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  // 오류가 아닌 짧은 안내(되돌림·복사). sticky면 다음 안내가 올 때까지 남는다.
+  const [info, setInfo] = useState<{ text: string; sticky: boolean } | null>(null)
+  const notify = (text: string, sticky = false) => setInfo({ text, sticky })
+  useEffect(() => {
+    if (!info || info.sticky) return
+    const t = setTimeout(() => setInfo(null), INFO_MS)
+    return () => clearTimeout(t)
+  }, [info])
   const [selection, setSelection] = useState('')
   const [editing, setEditing] = useState<number | null>(null)
   // 저장 실패로 아직 반영 안 된 입력(설계 §5) — 성공하면 지우고, 실패하면 쌓아 둔다(다른 셀 실패가 서로 안 지운다).
@@ -144,6 +157,17 @@ export function WorkspacePage() {
   // 리뷰 범위: 파일 화면은 고른 시트 하나(고르기 전 null), 게임 화면은 주소의 시트들(지금 레인)
   const target = useMemo<ReviewTarget | null>(() => (isGame ? { kind: 'game', gameId, sheetIds: scopeIds }
     : sheet !== null ? { kind: 'project', projectId: id, sheet } : null), [isGame, gameId, scopeIds, id, sheet])
+  // 되돌리기 스택(서버 변경 내역 id 묶음). 화면에 그리지 않으므로 ref 하나에 두고 늘 그 자리에서 바꾼다 —
+  // 되돌리기 요청과 저장이 겹쳐도 어느 쪽 변경도 잃지 않는다. 시트·게임 범위가 바뀌면 비운다.
+  const undoScope = isGame ? `${cacheKey}|${scopeIds.join(',')}` : `${id}|${sheet ?? ''}`
+  const undoRef = useRef<UndoState>(emptyUndo)
+  // 늦게 온 응답이 바뀐 범위의 스택에 쌓이지 않게 지금 범위를 비교한다
+  const undoScopeRef = useRef(undoScope)
+  if (undoScopeRef.current !== undoScope) { undoScopeRef.current = undoScope; undoRef.current = emptyUndo }
+  // 쌓은 횟수 — 되돌리기 요청 중에 새로 쌓였는지 본다
+  const undoGen = useRef(0)
+  const undoBusy = useRef(false)
+  const copyBusy = useRef(false)
   const summary = useQuery({
     queryKey: isGame ? ['workspace-summary', cacheKey, scopeIds.join(',')] : ['workspace-summary', id, sheet],
     queryFn: () => (isGame ? api.review(target as ReviewTarget).summary() : api.workspace.summary(id, sheet ?? undefined)),
@@ -230,10 +254,18 @@ export function WorkspacePage() {
     const next = new Map(prev); next.set(rid, { text, base: base ?? '' }); return next
   })
 
+  // Task 9·10도 쓴다: 한 번의 사용자 동작이 만든 변경 내역들을 되돌리기 한 단위로 쌓는다.
+  const pushUndo = (label: string, activityIds: number[], scope = undoScopeRef.current) => {
+    if (scope !== undoScopeRef.current || activityIds.length === 0) return
+    undoRef.current = pushUnit(undoRef.current, { label, activityIds })
+    undoGen.current += 1
+  }
+  // noUndo: 붙여넣기처럼 여러 행을 한 단위로 쌓는 쪽이 따로 모은다
   const save = useMutation({
-    mutationFn: ({ row, text }: { row: WorkspaceRow; text: string }) => api.saveTranslation(row.id, text, RATIO),
-    onMutate: ({ row }) => { mark(row.id, true); setSaveState('saving') },
-    onSuccess: (res, { row }) => {
+    mutationFn: ({ row, text }: { row: WorkspaceRow; text: string; noUndo?: boolean }) => api.saveTranslation(row.id, text, RATIO),
+    onMutate: ({ row }) => { mark(row.id, true); setSaveState('saving'); return { scope: undoScopeRef.current } },
+    onSuccess: (res, { row, noUndo }, ctx) => {
+      if (!noUndo && res.activityId != null) pushUndo('수정', [res.activityId], ctx?.scope)
       patch(res.row); setSaveState('saved'); setError(null); setFailed(row.id, null)
       setPropagated(res.propagated); setPropagatedSeq((s) => s + 1)
       // 원문이 같아 함께 바뀐 행은 다른 페이지·다른 시트에도 있을 수 있어 목록 캐시를 다시 받는다.
@@ -243,6 +275,77 @@ export function WorkspacePage() {
     onError: (e, { row, text }) => { setFailed(row.id, text, row.fix ?? ''); setSaveState('error'); showError(e) },
     onSettled: (_d, _e, { row }) => mark(row.id, false),
   })
+  // 붙여넣기: 행마다 저장하고, 성공한 저장의 변경 내역을 되돌리기 한 단위로 묶는다.
+  const saveMany = async (items: { row: WorkspaceRow; text: string }[]) => {
+    const scope = undoScopeRef.current
+    // 한 행씩 차례로 저장한다 — 한꺼번에 보내면 원문이 같은 행끼리 자동 반영·번역 메모리를 서로 잠가 DB 교착이 나고
+    // 한 행이 저장에 실패한다(2026-11-13). 실패한 행은 기존 저장 실패 표시(빨간 테두리)로 남고 나머지는 이어서 저장한다.
+    const ids: number[] = []
+    for (const { row, text } of items) {
+      try {
+        const r = await save.mutateAsync({ row, text, noUndo: true })
+        if (r.activityId != null) ids.push(r.activityId)
+      } catch { /* save의 onError가 표시한다 */ }
+    }
+    pushUndo(`붙여넣기 ${ids.length}행`, ids, scope)
+  }
+  // Ctrl+Z / Ctrl+Y. 요청 중에는 다음 키를 무시한다.
+  // 요청 중에 새로 고친 게 쌓였으면(newer) 다시 실행 목록은 비어 있어야 하므로 future에는 넣지 않고,
+  // past에 넣을 때는 새로 쌓인 것보다 아래에 넣는다. 실패하면 꺼낸 단위를 같은 규칙으로 돌려 둔다.
+  const runUndo = async (redo: boolean) => {
+    if (undoBusy.current) return
+    const [unit, rest] = redo ? popFuture(undoRef.current) : popPast(undoRef.current)
+    if (!unit) { notify(redo ? '다시 실행할 것이 없습니다' : '되돌릴 것이 없습니다'); return }
+    undoBusy.current = true
+    undoRef.current = rest
+    const scope = undoScopeRef.current
+    const gen = undoGen.current
+    const putBack = (u: UndoUnit, toRedo: boolean) => {
+      if (scope !== undoScopeRef.current) return
+      const newer = undoGen.current - gen
+      if (!toRedo) undoRef.current = insertPast(undoRef.current, u, newer)
+      else if (newer === 0) undoRef.current = toFuture(undoRef.current, u)
+    }
+    try {
+      const r = await api.activity.undo(unit.activityIds)
+      putBack({ label: unit.label, activityIds: r.activityIds }, !redo)
+      const skipped = r.skipped > 0 ? ` · ${r.skipped.toLocaleString()}행은 그 사이 바뀌었거나 확정이라 건너뜀` : ''
+      notify(`${redo ? '다시 실행' : `${unit.label} 되돌림`} · ${r.reverted.toLocaleString()}행${skipped}`)
+      setError(null)
+      refreshRows()
+      qc.invalidateQueries({ queryKey: ['activity', cacheKey] })
+    } catch (e) {
+      putBack(unit, redo)
+      showError(e)
+    } finally {
+      undoBusy.current = false
+    }
+  }
+  // Fix 머리글 우클릭 "Fix 열 전체 복사": 지금 보기 조건으로 모든 쪽을 받아 엑셀 한 열처럼 복사한다.
+  const copyAllFix = async () => {
+    if (target === null || copyBusy.current) return
+    copyBusy.current = true
+    const t = target
+    notify('복사 중…', true)
+    try {
+      const fixes: (string | null)[] = []
+      let all = Infinity
+      for (let page = 0; page * PAGE < all; page++) {
+        const res = await api.review(t).rows({ page, size: PAGE, filter, q, qIn })
+        all = res.total
+        fixes.push(...res.rows.map((r) => r.fix))
+        if (res.rows.length === 0) break
+      }
+      if (!navigator.clipboard) throw new Error('클립보드를 쓸 수 없습니다.')
+      await navigator.clipboard.writeText(columnClipboard(fixes))
+      notify(`Fix ${fixes.length.toLocaleString()}행 복사`)
+    } catch (e) {
+      setInfo(null)
+      showError(e)
+    } finally {
+      copyBusy.current = false
+    }
+  }
   // 그리드 한 행(WorkspaceRow)을 캐시에서 통째로 바꾼다 — 행 번역·체크 응답이 이 모양이다.
   const replaceRow = (next: WorkspaceRow) => {
     for (const [key, data] of qc.getQueriesData<WorkspaceRowsResponse>({ queryKey: ['workspace-rows', cacheKey] })) {
@@ -265,6 +368,19 @@ export function WorkspacePage() {
     onError: showError,
     onSettled: (_d, _e, row) => setTranslating(toggle(row.id, false)),
   })
+  // 원문 범위 우클릭 → 여러 행 DeepL/GPT 번역 창. 묶음마다 받은 행을 바로 반영하고, 끝나면 되돌리기 한 단위로 쌓는다.
+  const [batchAsk, setBatchAsk] = useState<{ engine: 'DEEPL' | 'GPT'; rows: WorkspaceRow[]; scope: string } | null>(null)
+  // Fix 범위 우클릭 "GPT로 다듬기" 창. scope는 연 때의 되돌리기 범위.
+  const [polishAsk, setPolishAsk] = useState<{ rows: WorkspaceRow[]; scope: string } | null>(null)
+  const markTranslating = (ids: number[], on: boolean) => setTranslating((prev) => {
+    const next = new Set(prev)
+    for (const rid of ids) { if (on) next.add(rid); else next.delete(rid) }
+    return next
+  })
+  const onBatchRows = (next: WorkspaceRow[]) => {
+    for (const r of next) { replaceRow(r); setFailed(r.id, null) }
+    qc.invalidateQueries({ queryKey: ['workspace-summary', cacheKey] })
+  }
   // 캐시에 있는 그 행을 fn으로 고친다(캐시의 최신 행을 기준으로 — 클릭 때 들고 있던 행은 그 사이 낡았을 수 있다).
   const updateRow = (rid: number, fn: (r: WorkspaceRow) => WorkspaceRow) => {
     for (const [key, data] of qc.getQueriesData<WorkspaceRowsResponse>({ queryKey: ['workspace-rows', cacheKey] })) {
@@ -313,7 +429,6 @@ export function WorkspacePage() {
     qc.invalidateQueries({ queryKey: ['workspace-summary', cacheKey] })
   }
   const [josaDialog, setJosaDialog] = useState<{ x: number; y: number } | null>(null)
-  const [tagSpacingOpen, setTagSpacingOpen] = useState(false)
   // 명령으로 고치기 창의 범위(null = 닫힘). 실행은 창 밖 보관소에서 돌아 창을 닫아도 계속된다.
   const [commandFix, setCommandFix] = useState<{ target: ReviewTarget; label: string } | null>(null)
   const commandRun = useCommandRun(screen)
@@ -512,12 +627,6 @@ export function WorkspacePage() {
             <ViewSizePicker value={viewSize} onChange={pickViewSize} />
             {paged && !failed && <PageBar page={viewPage} size={viewSize} total={total} onPage={setViewPage} />}
             {target !== null && (
-              <button type="button" onClick={() => setTagSpacingOpen(true)} title="태그 앞뒤에 붙은 낱말을 Kiwi로 보고 골라서 띄웁니다"
-                className="press mb-1 whitespace-nowrap rounded border border-line bg-white px-2 py-0.5 text-xs text-body hover:bg-canvas">
-                태그 띄어쓰기…
-              </button>
-            )}
-            {target !== null && (
               <CommandRunButton run={commandRun} sheet={scopeName} onOpen={openCommand} />
             )}
             {filter === 'JOSA' && target !== null && (summary.data?.josa ?? 0) > 0 && (
@@ -542,7 +651,14 @@ export function WorkspacePage() {
             // 쪽을 넘기거나 보기를 바꾸면 그리드를 새로 그려 스크롤·선택을 맨 위로 되돌린다
             : <WorkspaceGrid key={paged ? `${viewSize}:${viewPage}` : 'all'} rows={rows} ratio={RATIO} finalReview={finalReview}
                 placeOf={isGame ? (r) => `${fileNames[r.projectId ?? 0] ?? ''} / ${r.sheet ?? ''}` : undefined} busy={busy} highlighted={highlighted} failedText={failedText}
-                onSave={(row, text) => save.mutate({ row, text })} onMarks={(row, patch) => marks.mutate({ row, patch })}
+                onSave={(row, text) => save.mutate({ row, text })}
+                onSaveMany={(items) => { void saveMany(items) }}
+                onUndo={() => { void runUndo(false) }} onRedo={() => { void runUndo(true) }} onCopyAllFix={() => { void copyAllFix() }}
+                onRangeAction={(action, rs) => {
+                  if (action === 'polish') setPolishAsk({ rows: rs, scope: undoScopeRef.current })
+                  else setBatchAsk({ engine: action === 'deepl' ? 'DEEPL' : 'GPT', rows: rs, scope: undoScopeRef.current })
+                }}
+                onNotice={setError} onMarks={(row, patch) => marks.mutate({ row, patch })}
                 onBulkMarks={(key, on) => { if (target !== null) bulkMarks.mutate({ key, on }) }} viewCount={paged ? rows.length : total}
                 onFilterDuplicates={filterDuplicates}
                 onAddToGlossary={onAddToGlossary}
@@ -566,13 +682,29 @@ export function WorkspacePage() {
         <TranslateRowDialog row={translateAsk} gameId={isGame ? gameId : project?.gameId}
           onTranslate={(row) => translate.mutate(row)} onClose={() => setTranslateAsk(null)} />
       )}
+      {batchAsk && (
+        <BatchTranslateDialog engine={batchAsk.engine} rows={batchAsk.rows} gameId={isGame ? gameId : project?.gameId}
+          onRows={onBatchRows} onTranslating={markTranslating}
+          onDone={({ activityIds, translated, skipped }) => {
+            pushUndo(`${batchAsk.engine === 'GPT' ? 'GPT' : 'DeepL'} 번역 ${translated}행`, activityIds, batchAsk.scope)
+            notify(`번역 ${translated}행 · 건너뜀 ${skipped}행`)
+          }}
+          onClose={() => setBatchAsk(null)} />
+      )}
+      {polishAsk && (
+        <PolishDialog rows={polishAsk.rows} gameId={isGame ? gameId : project?.gameId}
+          onDone={({ activityIds, saved, skipped }) => {
+            pushUndo(`GPT로 다듬기 ${saved}행`, activityIds, polishAsk.scope)
+            notify(`다듬기 ${saved}행 넣음${skipped > 0 ? ` · ${skipped}행은 그 사이 바뀌어 건너뜀` : ''}`)
+            // 같은 원문 행에도 들어가 다른 행·다른 쪽도 바뀌므로 목록을 다시 읽는다
+            refreshRows()
+          }}
+          onClose={() => setPolishAsk(null)} />
+      )}
       {josaDialog && target !== null && (
         <JosaApplyDialog x={josaDialog.x} y={josaDialog.y} target={target}
           onDone={() => { setJosaDialog(null); refreshRows(); qc.invalidateQueries({ queryKey: ['josa-preview'] }) }}
           onClose={() => setJosaDialog(null)} />
-      )}
-      {tagSpacingOpen && target !== null && (
-        <TagSpacingDialog target={target} label={scopeName} onFixed={() => refreshRows()} onClose={() => setTagSpacingOpen(false)} />
       )}
       {commandFix !== null && (
         <CommandFixDialog target={commandFix.target} label={commandFix.label} onFixed={() => refreshRows()} onClose={() => setCommandFix(null)} />
@@ -590,7 +722,7 @@ export function WorkspacePage() {
           onPick={({ overwriteKo, finalOnly }) => { const ask = exportAsk; setExportAsk(null); exportXlsx.mutate({ only: ask.only, preview: ask.preview, overwriteKo, finalOnly }) }} />
       )}
       <CommandRunNotice run={commandRun} dialogOpen={commandFix !== null} onOpen={openCommand} />
-      <StatusBar summary={summary.data} editors={editors} finalReview={finalReview} sheet={isGame ? scopeName : sheet} selection={selection} saveState={saveState} error={error} propagated={propagated} propagatedSeq={propagatedSeq}
+      <StatusBar summary={summary.data} editors={editors} finalReview={finalReview} sheet={isGame ? scopeName : sheet} selection={selection} saveState={saveState} error={error} propagated={propagated} propagatedSeq={propagatedSeq} info={info?.text}
         onDismissError={() => { setError(null); setSaveState('saved') }} />
       <ReviewerNameModal open={!reviewer || renaming} initialName={reviewer?.name} onClose={reviewer ? () => setRenaming(false) : undefined}
         onSubmit={async (name) => { await setName(name); setRenaming(false) }} />

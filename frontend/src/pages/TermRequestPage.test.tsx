@@ -9,7 +9,7 @@ import { TermRequestPage } from './TermRequestPage'
 const game = { id: 7, name: '숲의 소환사', projects: 2, memory: 2318, lastUploadedAt: '2026-09-15T09:00:00Z', createdAt: '2026-09-01T00:00:00Z' }
 const item = (over: Partial<TermRequestItem>): TermRequestItem => ({
   id: 0, seq: 0, category: 'OTHER', src: '', renderings: [], source: 'GPT', gptKo: null, gptReason: null,
-  status: 'READY', finalKo: null, existingKo: null, existingNote: null, ...over,
+  status: 'READY', finalKo: null, existingKo: null, existingNote: null, gptChecked: false, gptFindReason: null, ...over,
 })
 const trap = item({
   id: 1, seq: 1, category: 'CHARACTER', src: '陷阱', source: 'CORPUS',
@@ -246,5 +246,80 @@ describe('TermRequestPage', () => {
     await userEvent.selectOptions(screen.getByLabelText('분류'), '몬스터')
     expect(screen.queryByRole('row', { name: /陷阱/ })).not.toBeInTheDocument()
     expect(rowOf('野猪王')).toBeInTheDocument()
+  })
+})
+
+describe('GPT로 표기 확인', () => {
+  const checked = detail([
+    { ...trap, renderings: [trap.renderings[0]], gptChecked: true, gptFindReason: '트랩은 다른 문장의 낱말' },
+    ...generated.items.slice(1).map((i) => ({ ...i, gptChecked: [...i.src].length > 1 })),   // 1글자 金은 확인 대상이 아니다
+  ])
+  const findRoute = { method: 'POST', path: '/glossary/requests/3/find', body: checked as unknown, status: 200 }
+
+  it('GPT로 표기 확인을 누르면 표기가 GPT 결과로 바뀐다', async () => {
+    const { calls } = mockFetch([findRoute, ...routes()])
+    render()
+    const row = within(await screen.findByRole('row', { name: /陷阱/ }))
+    expect(row.getByRole('button', { name: '트랩 2' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'GPT로 표기 확인' }))
+    await waitFor(() => expect(row.queryByRole('button', { name: '트랩 2' })).not.toBeInTheDocument())
+    expect(row.getByRole('button', { name: '함정 4' })).toBeInTheDocument()
+    expect(row.getByText('GPT 확인')).toBeInTheDocument()
+    expect(row.getByText('트랩은 다른 문장의 낱말')).toBeInTheDocument()
+    expect(calls.filter((c) => c.method === 'POST' && c.url.includes('/find')).length).toBe(1)
+    expect(await screen.findByRole('status')).toHaveTextContent('4개 확인')
+  })
+
+  it('확인 중에는 버튼이 막힌다', async () => {
+    const { fn } = mockFetch(routes())
+    const real = fn.getMockImplementation()!
+    fn.mockImplementation((input, init) => (String(input).includes('/find') ? new Promise<Response>(() => {}) : real(input, init)))
+    render()
+    await screen.findByRole('row', { name: /陷阱/ })
+    await userEvent.click(screen.getByRole('button', { name: 'GPT로 표기 확인' }))
+    const busy = await screen.findByRole('button', { name: '확인 중…' })
+    expect(busy).toBeDisabled()
+  })
+
+  it('확인할 항목이 없으면 버튼이 꺼져 있다', async () => {
+    mockFetch([
+      { path: '/glossary/requests/3', body: detail([{ ...trap, gptChecked: true }, gold]) },
+      { path: '/games/7', body: game },
+    ])
+    render()
+    await screen.findByRole('row', { name: /陷阱/ })
+    expect(screen.getByRole('button', { name: 'GPT로 표기 확인' })).toBeDisabled()
+  })
+
+  it('확인이 실패하면 오류를 보인다', async () => {
+    mockFetch([{ ...findRoute, status: 500, body: { message: '서버 오류' } }, ...routes()])
+    render()
+    await screen.findByRole('row', { name: /陷阱/ })
+    await userEvent.click(screen.getByRole('button', { name: 'GPT로 표기 확인' }))
+    expect(await screen.findByText(/GPT로 표기를 확인하지 못했습니다/)).toBeInTheDocument()
+  })
+})
+
+describe('GPT로 표기 확인 — 검토 반영', () => {
+  it('확인으로 표기가 바뀌면 전에 고른 최종 표기를 버리고 새 주 표기를 쓴다', async () => {
+    const checked = detail([{ ...trap, renderings: [trap.renderings[0]], gptChecked: true }, ...generated.items.slice(1)])
+    mockFetch([{ method: 'POST', path: '/glossary/requests/3/find', body: checked }, ...routes()])
+    render()
+    const row = within(await screen.findByRole('row', { name: /陷阱/ }))
+    await userEvent.click(row.getByRole('button', { name: '트랩 2' }))
+    expect(row.getByLabelText('陷阱 최종 표기')).toHaveValue('트랩')
+    await userEvent.click(screen.getByRole('button', { name: 'GPT로 표기 확인' }))
+    await waitFor(() => expect(row.queryByRole('button', { name: '트랩 2' })).not.toBeInTheDocument())
+    expect(row.getByLabelText('陷阱 최종 표기')).toHaveValue('함정')
+  })
+
+  it('GPT 초안을 만드는 동안에는 표기 확인 버튼이 막힌다', async () => {
+    const { fn } = mockFetch(routes())
+    const real = fn.getMockImplementation()!
+    fn.mockImplementation((input, init) => (String(input).includes('/generate') ? new Promise<Response>(() => {}) : real(input, init)))
+    render()
+    await screen.findByRole('row', { name: /陷阱/ })
+    await waitFor(() => expect(fn.mock.calls.some(([u]) => String(u).includes('/generate'))).toBe(true))
+    expect(screen.getByRole('button', { name: 'GPT로 표기 확인' })).toBeDisabled()
   })
 })

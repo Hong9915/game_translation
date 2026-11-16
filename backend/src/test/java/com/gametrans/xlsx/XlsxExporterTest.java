@@ -183,4 +183,40 @@ class XlsxExporterTest {
             assertThat(wb.getNumCellStyles()).isEqualTo(3);   // 기본 + 원래 스타일 + 색칠 복제본
         }
     }
+
+    /**
+     * openpyxl write_only·SXSSF로 만든 파일은 글자를 칸 안에 직접 적는다(t="inlineStr", &lt;is&gt;).
+     * POI는 그런 칸에 setCellValue하면 &lt;v&gt;만 바꾸고 &lt;is&gt;를 남겨, 엑셀은 옛 글을 그대로 보여 준다(2026-11-11 실제 게임 파일).
+     */
+    @Test
+    void overwritesInlineStringCells() throws Exception {
+        byte[] bytes;
+        try (org.apache.poi.xssf.streaming.SXSSFWorkbook wb = new org.apache.poi.xssf.streaming.SXSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet s = wb.createSheet("ItemText");
+            Row header = s.createRow(0);
+            header.createCell(0).setCellValue("ItemID"); header.createCell(2).setCellValue("CN"); header.createCell(3).setCellValue("KR");
+            Row row = s.createRow(1);
+            row.createCell(0).setCellValue("IT_1"); row.createCell(2).setCellValue("原文"); row.createCell(3).setCellValue("옛 번역");
+            wb.write(out);
+            bytes = out.toByteArray();
+        }
+        byte[] out = exporter.write(bytes, List.of(cfg(existingPair("C", "D"))),
+                List.of(new XlsxExporter.ExportRow("ItemText", 2, 0, "새 번역", false, true)),
+                new XlsxExporter.Plan(false, false, false), List.of(), List.of(),
+                List.of(new XlsxExporter.NoteRow("ItemText", 2, 0, "비고 글")));
+        String xml;
+        try (java.util.zip.ZipInputStream zip = new java.util.zip.ZipInputStream(new ByteArrayInputStream(out))) {
+            java.util.zip.ZipEntry e;
+            do { e = zip.getNextEntry(); } while (e != null && !e.getName().equals("xl/worksheets/sheet1.xml"));
+            xml = new String(zip.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        assertThat(xml).doesNotContain("옛 번역");
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(out))) {
+            Sheet s = wb.getSheet("ItemText");
+            assertThat(s.getRow(1).getCell(3).getStringCellValue()).isEqualTo("새 번역");
+            assertThat(s.getRow(1).getCell(2).getStringCellValue()).isEqualTo("原文");
+            assertThat(s.getRow(0).getCell(4).getStringCellValue()).isEqualTo("비고");
+            assertThat(((XSSFCellStyle) s.getRow(1).getCell(3).getCellStyle()).getFillPattern()).isEqualTo(FillPatternType.SOLID_FOREGROUND);
+        }
+    }
 }

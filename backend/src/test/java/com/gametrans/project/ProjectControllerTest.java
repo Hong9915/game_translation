@@ -22,6 +22,7 @@ import org.springframework.test.web.servlet.MockMvc;
 class ProjectControllerTest extends IntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired ProjectRepository projects;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     @Test
     void uploadCreatesProjectWithSheetAndRowCounts() throws Exception {
@@ -154,5 +155,28 @@ class ProjectControllerTest extends IntegrationTest {
         assertThat(JsonPath.parse(body).<java.util.List<Boolean>>read("$[?(@.id == " + normal + ")].finalReview")).containsExactly(false);
         assertThat(JsonPath.parse(body).<java.util.List<Boolean>>read("$[?(@.id == " + untouched + ")].finalReview")).containsExactly(false);
         mvc.perform(get("/api/projects/{id}", fin)).andExpect(jsonPath("$.finalReview").value(true));
+    }
+
+    @Test
+    void listAndGameCarryConfirmedProgress() throws Exception {
+        String game = TestProjects.freshGame();
+        long pid = TestProjects.uploadExistingKo(mvc, game);
+        long untouched = TestProjects.uploadExistingKo(mvc, game);   // 정규화 전 — 행 없음
+        mvc.perform(put("/api/projects/{id}/normalize", pid).contentType(MediaType.APPLICATION_JSON).content(TestProjects.EXISTING_KO_NORMALIZE))
+                .andExpect(status().isOk());
+        Integer total = jdbc.queryForObject("select count(*) from segment where project_id = ? and not skipped", Integer.class, pid);
+        assertThat(total).isGreaterThan(1);
+        jdbc.update("update segment set confirmed = true where id = (select min(id) from segment where project_id = ? and not skipped)", pid);
+        long gameId = ((Number) JsonPath.parse(mvc.perform(get("/api/projects/{id}", pid)).andReturn().getResponse().getContentAsString())
+                .read("$.gameId")).longValue();
+
+        String body = mvc.perform(get("/api/projects").param("gameId", String.valueOf(gameId))).andReturn().getResponse().getContentAsString();
+        assertThat(JsonPath.parse(body).<java.util.List<Integer>>read("$[?(@.id == " + pid + ")].reviewRows")).containsExactly(total);
+        assertThat(JsonPath.parse(body).<java.util.List<Integer>>read("$[?(@.id == " + pid + ")].confirmedRows")).containsExactly(1);
+        assertThat(JsonPath.parse(body).<java.util.List<Integer>>read("$[?(@.id == " + untouched + ")].reviewRows")).containsExactly(0);
+        mvc.perform(get("/api/projects/{id}", pid)).andExpect(jsonPath("$.reviewRows").value(total)).andExpect(jsonPath("$.confirmedRows").value(1));
+        mvc.perform(get("/api/games/{id}", gameId)).andExpect(jsonPath("$.reviewRows").value(total)).andExpect(jsonPath("$.confirmedRows").value(1));
+        String games = mvc.perform(get("/api/games")).andReturn().getResponse().getContentAsString();
+        assertThat(JsonPath.parse(games).<java.util.List<Integer>>read("$[?(@.id == " + gameId + ")].confirmedRows")).containsExactly(1);
     }
 }

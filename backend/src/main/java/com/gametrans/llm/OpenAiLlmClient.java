@@ -68,7 +68,15 @@ public class OpenAiLlmClient implements LlmClient {
     }
 
     @Override public List<ProofreadResult> proofreadBatch(ProofreadBatchRequest request) {
-        JsonNode items = chatJson("PROOFREAD", Prompts.proofreadSystem(request), Prompts.proofreadUser(request.rows()), false);
+        return verdicts(chatJson("PROOFREAD", Prompts.proofreadSystem(request), Prompts.proofreadUser(request.rows()), false));
+    }
+
+    @Override public List<ProofreadResult> polishBatch(ProofreadBatchRequest request) {
+        return verdicts(chatJson("POLISH", Prompts.polishSystem(request), Prompts.proofreadUser(request.rows()), false));
+    }
+
+    /** KEEP/FIX 판정 응답(교정·다듬기 공통). */
+    private static List<ProofreadResult> verdicts(JsonNode items) {
         List<ProofreadResult> out = new ArrayList<>();
         for (JsonNode n : items)
             out.add(new ProofreadResult(n.path("index").asText(), n.path("verdict").asText("KEEP"),
@@ -88,6 +96,17 @@ public class OpenAiLlmClient implements LlmClient {
         List<PhraseCategory> out = new ArrayList<>();
         for (JsonNode n : chatJson("CLASSIFY_PHRASES", Prompts.CLASSIFY_SYSTEM, Prompts.classifyUser(phrases), true))
             out.add(new PhraseCategory(n.path("src").asText(), n.path("category").asText("")));
+        return out;
+    }
+
+    @Override public List<TranslationResult> rewriteStyleBatch(List<FixTermsRow> rows) {
+        return results(chatJson("STYLE_FIX", Prompts.STYLE_FIX_SYSTEM, Prompts.styleFixUser(rows), true));
+    }
+
+    @Override public List<KindResult> classifyTextKinds(List<KindInput> rows) {
+        List<KindResult> out = new ArrayList<>();
+        for (JsonNode n : chatJson("TEXT_KIND", Prompts.TEXT_KIND_SYSTEM, Prompts.textKindUser(rows), true))
+            out.add(new KindResult(n.path("id").asText(), n.path("code").asText("")));
         return out;
     }
 

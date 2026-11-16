@@ -117,4 +117,28 @@ class TermSwapCommandTest extends IntegrationTest {
         assertThat(TermSwap.expand("Level 54·14", "스테이지 14-54", "Level 60·1")).isNull();
         assertThat(TermSwap.expand("Level 54·14", "스테이지 54", "Level 60·1")).isNull();
     }
+
+    /** 원래 글자를 하나도 지우지 않고 용어만 넣은 결과 = 끼워 넣음. 다른 말을 바꾼 결과와 가른다(2026-11-02 任务 → 퀘스트). */
+    @Test
+    void insertOnlyMeansNothingOfTheOldTextWasRemoved() {
+        assertThat(TermSwap.insertOnly("현상금 의뢰 완료 속도 가속 실패", "현상금 의뢰 완료 속도 퀘스트 가속 실패")).isTrue();
+        assertThat(TermSwap.insertOnly("누적 충전 이벤트", "누적 충전 이벤트 퀘스트")).isTrue();
+        assertThat(TermSwap.insertOnly("마을 재건 퀘스 챕터 25 완료", "마을 재건 퀘스트 챕터 25 완료")).isTrue();
+        assertThat(TermSwap.insertOnly("현상금 의뢰 완료 속도 가속 실패", "현상금 퀘스트 완료 속도 가속 실패")).isFalse();
+        assertThat(TermSwap.insertOnly("80개의 미션을 완료한", "80개의 퀘스트를 완료한")).isFalse();
+        assertThat(TermSwap.insertOnly("Level 54·14", "스테이지 54-14")).isFalse();
+    }
+
+    /** 끼워 넣은 행은 미리 보기에 INSERT 경고가 붙는다(화면은 이 행의 체크를 꺼 둔다). 바꾼 행엔 없다. */
+    @Test
+    void previewWarnsOnRowsWhereTheTermWasOnlyInserted() throws Exception {
+        llm.termSwap.put("함정을 설치", "덫을 설치");
+        llm.termSwap.put("트랩 피해", "트랩 덫 피해");
+        plan(Map.of("sheet", "Skill", "ops", List.of(TRAP)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows.length()").value(2))
+                .andExpect(jsonPath("$.rows[0].warnings.length()").value(0))
+                .andExpect(jsonPath("$.rows[1].after").value("트랩 덫 피해"))
+                .andExpect(jsonPath("$.rows[1].warnings[0].kind").value("INSERT"));
+    }
 }

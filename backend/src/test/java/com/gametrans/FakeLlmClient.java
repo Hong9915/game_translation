@@ -64,6 +64,21 @@ public class FakeLlmClient implements LlmClient {
         return out;
     }
 
+    /** 다듬기: 지금 한국어 → 고친 문장. 여기 없는 행은 KEEP으로 답한다. 받은 요청(지시문 포함)은 polishCalls에 쌓인다. */
+    public Map<String, String> polishFixes = new HashMap<>();
+    public List<ProofreadBatchRequest> polishCalls = new ArrayList<>();
+
+    @Override public List<ProofreadResult> polishBatch(ProofreadBatchRequest request) {
+        polishCalls.add(request);
+        List<ProofreadResult> out = new ArrayList<>();
+        for (ProofreadRow r : request.rows()) {
+            String fix = polishFixes.get(r.ko());
+            out.add(fix == null ? new ProofreadResult(r.index(), "KEEP", null, null)
+                    : new ProofreadResult(r.index(), "FIX", fix, "번역투: 테스트"));
+        }
+        return out;
+    }
+
     /** 용어 고치기: 빠진 용어의 원문 자리를 확정 번역으로 바꾼 듯 흉내 낸다 — ko 앞에 확정 번역들을 붙인다. fixTermsNoop이면 그대로 돌려준다. */
     public List<List<FixTermsRow>> fixTermsCalls = new ArrayList<>();
     public boolean fixTermsNoop;
@@ -113,6 +128,26 @@ public class FakeLlmClient implements LlmClient {
         return out;
     }
 
+    /** 문체 다시 쓰기 응답(지금 글 → 고친 글). 없는 글은 응답에서 빠진다. */
+    public Map<String, String> styleRewrites = new java.util.concurrent.ConcurrentHashMap<>();
+
+    @Override public List<TranslationResult> rewriteStyleBatch(List<FixTermsRow> rows) {
+        List<TranslationResult> out = new ArrayList<>();
+        for (FixTermsRow r : rows) if (styleRewrites.containsKey(r.ko())) out.add(new TranslationResult(r.index(), styleRewrites.get(r.ko())));
+        return out;
+    }
+
+    /** 글 종류 응답(원문 → 코드). 없는 원문은 응답에서 빠진다. */
+    public Map<String, String> textKinds = new java.util.concurrent.ConcurrentHashMap<>();
+    public List<List<KindInput>> textKindCalls = java.util.Collections.synchronizedList(new ArrayList<>());
+
+    @Override public List<KindResult> classifyTextKinds(List<KindInput> rows) {
+        textKindCalls.add(rows);
+        List<KindResult> out = new ArrayList<>();
+        for (KindInput r : rows) if (textKinds.containsKey(r.zh())) out.add(new KindResult(r.id(), textKinds.get(r.zh())));
+        return out;
+    }
+
     /** 단어장 요청 초안 응답(원문 → 한국어). 없는 원문은 응답에서 빠진다. 호출은 draftCalls에 쌓인다(동시에 불릴 수 있다). */
     public Map<String, String> termDrafts = new java.util.concurrent.ConcurrentHashMap<>();
     public List<TermDraftRequest> draftCalls = java.util.Collections.synchronizedList(new ArrayList<>());
@@ -129,7 +164,7 @@ public class FakeLlmClient implements LlmClient {
     public List<List<Map<String, Object>>> toolMessages = new ArrayList<>();
     public List<List<ToolSpec>> toolSpecsSeen = new ArrayList<>();
 
-    @Override public AssistantTurn chatTools(String stage, List<Map<String, Object>> messages, List<ToolSpec> tools) {
+    @Override public synchronized AssistantTurn chatTools(String stage, List<Map<String, Object>> messages, List<ToolSpec> tools) {
         toolMessages.add(List.copyOf(messages));
         toolSpecsSeen.add(List.copyOf(tools));
         return toolTurns.isEmpty() ? new AssistantTurn("끝", List.of()) : toolTurns.poll();

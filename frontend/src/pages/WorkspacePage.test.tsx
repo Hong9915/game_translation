@@ -6,10 +6,10 @@ import { renderWithProviders } from '../test/render'
 import { WorkspacePage } from './WorkspacePage'
 
 const project = { id: 1, fileName: '삼국_텍스트.xlsx', gameId: 3, gameName: '삼국지M', sheetCount: 2, rowCount: 5, uploadedAt: '2026-09-23T00:00:00Z', currentStep: 5, reviewOnly: true }
-const summary = { sheets: [{ sheet: 'UI', total: 2, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }, { sheet: 'Skill', total: 1, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }], total: 2, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, unassigned: 2, reviewers: [] }
+const summary = { sheets: [{ sheet: 'UI', total: 2, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }, { sheet: 'Skill', total: 1, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }], total: 2, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, unassigned: 2, reviewers: [] }
 const rows = [
-  { id: 10, rowNo: 2, pairIndex: 0, indexLabel: 'UI!2', keyText: 'UI_CONFIRM', src: '确认', en: 'Confirm', existingKo: '확인', fix: '확인', changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0 },
-  { id: 11, rowNo: 3, pairIndex: 0, indexLabel: 'UI!3', keyText: 'ITEM_1001', src: '混沌圣物', en: 'Chaos Relic', existingKo: '혼돈의 성물', fix: '혼돈의 성물', changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0 },
+  { id: 10, rowNo: 2, pairIndex: 0, indexLabel: 'UI!2', keyText: 'UI_CONFIRM', src: '确认', en: 'Confirm', existingKo: '확인', fix: '확인', changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, review3: false, needsCheck: false, confirmed: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0 },
+  { id: 11, rowNo: 3, pairIndex: 0, indexLabel: 'UI!3', keyText: 'ITEM_1001', src: '混沌圣物', en: 'Chaos Relic', existingKo: '혼돈의 성물', fix: '혼돈의 성물', changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, review3: false, needsCheck: false, confirmed: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0 },
 ]
 const saved = { row: { id: 11, indexLabel: 'UI!3', srcText: '混沌圣物', enText: 'Chaos Relic', currentText: '성물', lenKo: 2, lenSrc: 4, flagged: false, history: [], done: false, assignee: null }, propagated: 0 }
 const me = { id: 1, name: '형준', color: '#1f4b99' }
@@ -87,22 +87,11 @@ describe('WorkspacePage', () => {
       && JSON.stringify(c.body) === JSON.stringify({ sheet: 'UI', kinds: ['HANGUL', 'NUMBER'] }))).toBe(true))
   })
 
-  it('태그 띄어쓰기 버튼은 지금 시트의 후보 창을 열고, 고치면 행을 다시 읽는다', async () => {
-    const tagged = { segmentId: 11, rowNo: 3, src: '混沌<b>圣物</b>', before: '혼돈의<b>성물</b>획득', after: '혼돈의 <b>성물</b> 획득' }
-    const { calls } = mockFetch([
-      ...routes(),
-      { path: '/review/1/tag-spacing?sheet=UI', body: [tagged] },
-      { method: 'POST', path: '/review/1/tag-spacing', body: { applied: 1 } },
-    ])
+  it('태그 띄어쓰기는 교정 규칙 창으로 옮겨서 리뷰 화면에는 버튼이 없다', async () => {
+    mockFetch(routes())
     render()
     await screen.findByText('UI_CONFIRM')
-    await userEvent.click(screen.getByRole('button', { name: '태그 띄어쓰기…' }))
-    expect(await screen.findByRole('dialog', { name: '태그 띄어쓰기' })).toHaveTextContent('태그 띄어쓰기 · UI')
-    const before = calls.filter((c) => c.url.includes('/review/1/rows?sheet=UI')).length
-    await userEvent.click(await screen.findByRole('button', { name: '1행 고치기' }))
-    await waitFor(() => expect(calls.filter((c) => c.url.includes('/review/1/rows?sheet=UI')).length).toBeGreaterThan(before))
-    await userEvent.click(screen.getByRole('button', { name: '닫기' }))
-    expect(screen.queryByRole('dialog', { name: '태그 띄어쓰기' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /태그 띄어쓰기/ })).not.toBeInTheDocument()
   })
 
   it('# 칸을 마지막으로 고친 사람 색으로 칠하고 범례를 보이며, # 칸 우클릭으로 그 행의 변경 내역을 연다', async () => {
@@ -534,7 +523,7 @@ describe('WorkspacePage', () => {
   })
 
   describe('쪽 넘기기 보기', () => {
-    const bigSummary = { sheets: [{ sheet: 'UI', total: 250, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }, { sheet: 'Skill', total: 1, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }], total: 251, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, unassigned: 251, reviewers: [] }
+    const bigSummary = { sheets: [{ sheet: 'UI', total: 250, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }, { sheet: 'Skill', total: 1, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }], total: 251, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, unassigned: 251, reviewers: [] }
     const pageRows = (page: number, size: number) => Array.from({ length: Math.min(size, 250 - page * size) }, (_, i) => ({ ...rows[0], id: page * size + i, rowNo: page * size + i + 2, keyText: `R${page * size + i}` }))
     const bigRoutes = () => [
       ...routes().filter((r) => r.path !== '/review/1/rows/summary' && String(r.path) !== String(/\/review\/1\/rows\?sheet=UI/)),
@@ -614,7 +603,7 @@ describe('WorkspacePage', () => {
 
   it('never shows page-0 rows under page-2 row numbers while a scroll jump is loading (regression: Finding 1 windowing)', async () => {
     localStorage.setItem('gametrans.workspaceViewSize', 'all')   // 이 회귀는 전체 스크롤 보기의 창 계산이다
-    const bigSummary = { sheets: [{ sheet: 'UI', total: 1200, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }], total: 1200, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, unassigned: 1200, reviewers: [] }
+    const bigSummary = { sheets: [{ sheet: 'UI', total: 1200, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }], total: 1200, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, unassigned: 1200, reviewers: [] }
     const page0Rows = Array.from({ length: 500 }, (_, i) => ({ ...rows[0], id: i, rowNo: i + 1, keyText: `P0-${i}` }))
     const page2Rows = Array.from({ length: 200 }, (_, i) => ({ ...rows[0], id: 1000 + i, rowNo: 1001 + i, keyText: `P2-${i}` }))
     let resolvePage2: () => void = () => {}
@@ -723,5 +712,231 @@ describe('WorkspacePage', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Skill 122행' }))
     await waitFor(() => expect(calls.some((c) => c.url.includes('sheet=Skill&page=2'))).toBe(true))
     await waitFor(() => expect(screen.getByRole('gridcell', { name: '122행 Fix' }).className).toContain('107c41'))
+  })
+
+  describe('되돌리기·다시 실행·Fix 열 전체 복사', () => {
+    const editFix = async (rowNo: number, text: string) => {
+      await userEvent.dblClick(screen.getByRole('gridcell', { name: `${rowNo}행 Fix` }))
+      const box = screen.getByRole('textbox', { name: `${rowNo}행 Fix` })
+      await userEvent.clear(box)
+      await userEvent.type(box, `${text}{Enter}`)
+    }
+    const undoCalls = (calls: { method: string; url: string; body: unknown }[]) => calls.filter((c) => c.method === 'POST' && c.url.includes('/activity/undo'))
+
+    it('undo after save calls activity undo with the save\'s activityId', async () => {
+      const { calls } = mockFetch([...routes(),
+        { method: 'PUT', path: '/segments/11/translation', body: { ...saved, activityId: 77 } },
+        { method: 'POST', path: '/activity/undo', body: { reverted: 1, skipped: 0, activityIds: [90] } }])
+      render()
+      await screen.findByText('ITEM_1001')
+      await editFix(3, '성물')
+      await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+      await screen.findByText('저장됨')
+      fireEvent.keyDown(screen.getByRole('grid'), { key: 'z', code: 'KeyZ', ctrlKey: true })
+      await waitFor(() => expect(undoCalls(calls)).toHaveLength(1))
+      expect(undoCalls(calls)[0].body).toEqual({ activityIds: [77] })
+      expect(await screen.findByText('수정 되돌림 · 1행')).toBeInTheDocument()
+      // 목록을 다시 받는다
+      await waitFor(() => expect(calls.filter((c) => c.method === 'GET' && c.url.includes('rows?sheet=UI')).length).toBeGreaterThan(1))
+    })
+
+    it('redo calls undo with the returned ids', async () => {
+      const { calls } = mockFetch([...routes(),
+        { method: 'PUT', path: '/segments/11/translation', body: { ...saved, activityId: 77 } },
+        { method: 'POST', path: '/activity/undo', body: { reverted: 1, skipped: 1, activityIds: [90] } }])
+      render()
+      await screen.findByText('ITEM_1001')
+      await editFix(3, '성물')
+      await screen.findByText('저장됨')
+      const grid = screen.getByRole('grid')
+      fireEvent.keyDown(grid, { key: 'z', code: 'KeyZ', ctrlKey: true })
+      expect(await screen.findByText('수정 되돌림 · 1행 · 1행은 그 사이 바뀌었거나 확정이라 건너뜀')).toBeInTheDocument()
+      fireEvent.keyDown(grid, { key: 'y', code: 'KeyY', ctrlKey: true })
+      await waitFor(() => expect(undoCalls(calls)).toHaveLength(2))
+      expect(undoCalls(calls)[1].body).toEqual({ activityIds: [90] })
+      expect(await screen.findByText(/^다시 실행 · 1행/)).toBeInTheDocument()
+    })
+
+    it('ignores Ctrl+Z while an undo request is in flight', async () => {
+      const { calls } = mockFetch([...routes(),
+        { method: 'PUT', path: '/segments/11/translation', body: { ...saved, activityId: 77 } },
+        { method: 'PUT', path: '/segments/10/translation', body: { ...saved, row: { ...saved.row, id: 10 }, activityId: 78 } },
+        { method: 'POST', path: '/activity/undo', body: { reverted: 1, skipped: 0, activityIds: [90] } }])
+      render()
+      await screen.findByText('ITEM_1001')
+      await editFix(3, '성물')
+      await editFix(2, '확인!')
+      await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2))
+      await screen.findByText('저장됨')
+      const grid = screen.getByRole('grid')
+      fireEvent.keyDown(grid, { key: 'z', code: 'KeyZ', ctrlKey: true })
+      fireEvent.keyDown(grid, { key: 'z', code: 'KeyZ', ctrlKey: true })
+      await screen.findByText('수정 되돌림 · 1행')
+      expect(undoCalls(calls)).toHaveLength(1)
+      expect(undoCalls(calls)[0].body).toEqual({ activityIds: [78] })
+    })
+
+    it('a save during an in-flight undo keeps redo empty and stays on top', async () => {
+      const { calls, fn } = mockFetch([...routes(),
+        { method: 'PUT', path: '/segments/11/translation', body: { ...saved, activityId: 77 } },
+        { method: 'PUT', path: '/segments/10/translation', body: { ...saved, row: { ...saved.row, id: 10 }, activityId: 78 } },
+        { method: 'POST', path: '/activity/undo', body: { reverted: 1, skipped: 0, activityIds: [90] } }])
+      // 되돌리기 응답을 붙잡아 두고, 그동안 다른 행을 저장한다
+      let release = () => {}
+      const gate = new Promise<void>((r) => { release = r })
+      const orig = fn.getMockImplementation()!
+      fn.mockImplementation(async (input, init) => {
+        if (String(input).includes('/activity/undo') && undoCalls(calls).length === 0) { const res = orig(input, init); await gate; return res }
+        return orig(input, init)
+      })
+      render()
+      await screen.findByText('ITEM_1001')
+      await editFix(3, '성물')
+      await screen.findByText('저장됨')
+      const grid = screen.getByRole('grid')
+      fireEvent.keyDown(grid, { key: 'z', code: 'KeyZ', ctrlKey: true })
+      await waitFor(() => expect(undoCalls(calls)).toHaveLength(1))
+      await editFix(2, '확인!')
+      await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2))
+      await screen.findByText('저장됨')
+      await act(async () => { release() })
+      expect(await screen.findByText('수정 되돌림 · 1행')).toBeInTheDocument()
+      fireEvent.keyDown(grid, { key: 'y', code: 'KeyY', ctrlKey: true })
+      expect(await screen.findByText('다시 실행할 것이 없습니다')).toBeInTheDocument()
+      fireEvent.keyDown(grid, { key: 'z', code: 'KeyZ', ctrlKey: true })
+      await waitFor(() => expect(undoCalls(calls)).toHaveLength(2))
+      expect(undoCalls(calls)[1].body).toEqual({ activityIds: [78] })
+    })
+
+    it('원문 범위 우클릭 GPT 번역은 여러 행 창을 열고, 번역 결과를 바로 반영하며 Ctrl+Z 한 번에 되돌린다', async () => {
+      const game = { id: 3, name: '삼국지M', deeplInstructions: '', gptTranslateBase: '기본 지시 글', gptTranslateExtra: null, gptPolishBase: '', gptPolishExtra: null }
+      const { calls } = mockFetch([...routes(), { path: '/games/3', body: game },
+        { method: 'POST', path: '/segments/translate-batch', body: { rows: [{ ...rows[0], fix: '확인함' }, { ...rows[1], fix: '카오스 성물' }], skipped: [], activityIds: { 1: 300 } } },
+        { method: 'POST', path: '/activity/undo', body: { reverted: 2, skipped: 0, activityIds: [301] } }])
+      render()
+      await screen.findByText('ITEM_1001')
+      fireEvent.mouseDown(screen.getByText('确认'), { button: 0 })
+      fireEvent.mouseDown(screen.getByText('混沌圣物'), { button: 0, shiftKey: true })
+      fireEvent.contextMenu(screen.getByText('确认'))
+      await userEvent.click(screen.getByRole('menuitem', { name: 'GPT 번역 (2행)' }))
+      expect(await screen.findByRole('heading', { name: 'GPT 번역 (2행)' })).toBeInTheDocument()
+      expect(await screen.findByText('기본 지시 글')).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: '번역' }))
+      expect(await screen.findByText('카오스 성물')).toBeInTheDocument()
+      expect(calls.find((c) => c.url.includes('/segments/translate-batch'))!.body).toEqual({ segmentIds: [10, 11], engine: 'GPT' })
+      expect(await screen.findByText('번역 2행 · 건너뜀 0행')).toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'GPT 번역 (2행)' })).toBeNull()
+      fireEvent.keyDown(screen.getByRole('grid'), { key: 'z', code: 'KeyZ', ctrlKey: true })
+      await waitFor(() => expect(undoCalls(calls)).toHaveLength(1))
+      expect(undoCalls(calls)[0].body).toEqual({ activityIds: [300] })
+      expect(await screen.findByText('GPT 번역 2행 되돌림 · 2행')).toBeInTheDocument()
+    })
+
+    it('Fix 범위 우클릭 GPT로 다듬기는 전/후 창을 열고, 넣은 뒤 목록을 다시 읽으며 Ctrl+Z 한 번에 되돌린다', async () => {
+      const game = { id: 3, name: '삼국지M', deeplInstructions: '', gptTranslateBase: '', gptTranslateExtra: null, gptPolishBase: '다듬기 기본 지시', gptPolishExtra: null }
+      const { calls } = mockFetch([...routes(), { path: '/games/3', body: game },
+        { method: 'POST', path: '/segments/polish', body: { items: [{ segmentId: 11, before: '혼돈의 성물', after: '카오스 성물', reason: '용어' }], kept: 1, skipped: [] } },
+        { method: 'POST', path: '/segments/save-batch', body: { saved: 1, skipped: 0, propagated: 2, activityIds: [400] } },
+        { method: 'POST', path: '/activity/undo', body: { reverted: 1, skipped: 0, activityIds: [401] } }])
+      render()
+      await screen.findByText('ITEM_1001')
+      fireEvent.mouseDown(screen.getByRole('gridcell', { name: '2행 Fix' }), { button: 0 })
+      fireEvent.mouseDown(screen.getByRole('gridcell', { name: '3행 Fix' }), { button: 0, shiftKey: true })
+      fireEvent.contextMenu(screen.getByRole('gridcell', { name: '3행 Fix' }))
+      await userEvent.click(screen.getByRole('menuitem', { name: 'GPT로 다듬기 (2행)' }))
+      expect(await screen.findByRole('heading', { name: 'GPT로 다듬기 (2행)' })).toBeInTheDocument()
+      expect(await screen.findByText('다듬기 기본 지시')).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: '다듬기' }))
+      expect(await screen.findByText('카오스 성물')).toBeInTheDocument()
+      expect(calls.find((c) => c.url.includes('/segments/polish'))!.body).toEqual({ segmentIds: [10, 11] })
+      const before = calls.filter((c) => c.url.includes('/review/1/rows?sheet=UI')).length
+      await userEvent.click(screen.getByRole('button', { name: '넣기 (1행)' }))
+      expect(await screen.findByText('다듬기 1행 넣음')).toBeInTheDocument()
+      expect(calls.find((c) => c.url.includes('/segments/save-batch'))!.body).toEqual({ items: [{ segmentId: 11, text: '카오스 성물', base: '혼돈의 성물' }] })
+      expect(screen.queryByRole('heading', { name: 'GPT로 다듬기 (2행)' })).toBeNull()
+      await waitFor(() => expect(calls.filter((c) => c.url.includes('/review/1/rows?sheet=UI')).length).toBeGreaterThan(before))
+      fireEvent.keyDown(screen.getByRole('grid'), { key: 'z', code: 'KeyZ', ctrlKey: true })
+      await waitFor(() => expect(undoCalls(calls)).toHaveLength(1))
+      expect(undoCalls(calls)[0].body).toEqual({ activityIds: [400] })
+      expect(await screen.findByText('GPT로 다듬기 1행 되돌림 · 1행')).toBeInTheDocument()
+    })
+
+    it('paste pushes one undo unit', async () => {
+      const { calls } = mockFetch([...routes(),
+        { method: 'PUT', path: '/segments/10/translation', body: { ...saved, row: { ...saved.row, id: 10, currentText: '가' }, activityId: 1 } },
+        { method: 'PUT', path: '/segments/11/translation', body: { ...saved, row: { ...saved.row, currentText: '나' }, activityId: 2 } },
+        { method: 'POST', path: '/activity/undo', body: { reverted: 2, skipped: 0, activityIds: [5, 6] } }])
+      render()
+      await screen.findByText('ITEM_1001')
+      const grid = screen.getByRole('grid')
+      fireEvent.keyDown(grid, { key: 'ArrowDown' })   // 첫 키 = 1행 Fix
+      fireEvent.paste(grid, { clipboardData: { getData: () => '가\n나' } })
+      await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2))
+      await screen.findByText('저장됨')
+      fireEvent.keyDown(grid, { key: 'z', code: 'KeyZ', ctrlKey: true })
+      await waitFor(() => expect(undoCalls(calls)).toHaveLength(1))
+      expect([...(undoCalls(calls)[0].body as { activityIds: number[] }).activityIds].sort()).toEqual([1, 2])
+      expect(await screen.findByText('붙여넣기 2행 되돌림 · 2행')).toBeInTheDocument()
+      fireEvent.keyDown(grid, { key: 'z', code: 'KeyZ', ctrlKey: true })
+      expect(await screen.findByText('되돌릴 것이 없습니다')).toBeInTheDocument()
+      expect(undoCalls(calls)).toHaveLength(1)
+    })
+
+    it('paste saves rows one at a time', async () => {
+      // 동시에 저장하면 같은 원문 자동 반영·번역 메모리가 서로 잠가 DB 교착이 난다(2026-11-13) — 앞 행이 끝나야 다음 행을 보낸다
+      const { fn, calls } = mockFetch([...routes(),
+        { method: 'PUT', path: '/segments/10/translation', body: { ...saved, row: { ...saved.row, id: 10, currentText: '가' }, activityId: 1 } },
+        { method: 'PUT', path: '/segments/11/translation', body: { ...saved, row: { ...saved.row, currentText: '나' }, activityId: 2 } }])
+      const real = fn.getMockImplementation()!
+      let release!: () => void
+      const gate = new Promise<void>((r) => { release = r })
+      let held = false
+      fn.mockImplementation(async (input, init) => {
+        if (!held && (init?.method ?? 'GET').toUpperCase() === 'PUT') { held = true; const res = real(input, init); await gate; return res }
+        return real(input, init)
+      })
+      render()
+      await screen.findByText('ITEM_1001')
+      const grid = screen.getByRole('grid')
+      fireEvent.keyDown(grid, { key: 'ArrowDown' })
+      fireEvent.paste(grid, { clipboardData: { getData: () => '가\n나' } })
+      await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1))
+      await new Promise((r) => setTimeout(r, 30))
+      expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1)
+      release()
+      await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2))
+    })
+
+    it('undo stack resets when sheet changes', async () => {
+      const { calls } = mockFetch([...routes(),
+        { method: 'PUT', path: '/segments/11/translation', body: { ...saved, activityId: 77 } },
+        { method: 'POST', path: '/activity/undo', body: { reverted: 1, skipped: 0, activityIds: [90] } }])
+      render()
+      await screen.findByText('ITEM_1001')
+      await editFix(3, '성물')
+      await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+      await screen.findByText('저장됨')
+      await userEvent.click(screen.getByRole('tab', { name: /Skill/ }))
+      await waitFor(() => expect(screen.queryByText('ITEM_1001')).not.toBeInTheDocument())
+      fireEvent.keyDown(screen.getByRole('grid'), { key: 'z', code: 'KeyZ', ctrlKey: true })
+      expect(await screen.findByText('되돌릴 것이 없습니다')).toBeInTheDocument()
+      expect(undoCalls(calls)).toHaveLength(0)
+    })
+
+    it('copy all fix fetches every page', async () => {
+      const writeText = vi.fn(() => Promise.resolve())
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      const { calls } = mockFetch([
+        { path: /\/review\/1\/rows\?sheet=UI&page=1&size=500/, body: { rows: [{ ...rows[0], id: 12, fix: '셋\t넷' }], page: 1, size: 500, total: 501 } },
+        { path: /\/review\/1\/rows\?sheet=UI&page=0&size=500/, body: { rows, page: 0, size: 500, total: 501 } },
+        ...routes()])
+      render()
+      await screen.findByText('ITEM_1001')
+      fireEvent.contextMenu(screen.getByRole('columnheader', { name: '수정 한국어 (Fix)' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Fix 열 전체 복사' }))
+      expect(await screen.findByText('Fix 3행 복사')).toBeInTheDocument()
+      expect(writeText).toHaveBeenCalledWith('확인\n혼돈의 성물\n"셋\t넷"')
+      expect(calls.some((c) => c.url.includes('sheet=UI&page=1&size=500'))).toBe(true)
+    })
   })
 })

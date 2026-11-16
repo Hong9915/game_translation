@@ -42,6 +42,11 @@ public class GameController {
         return service.summary(service.setDeepLInstructions(id, req.text()));
     }
 
+    @PutMapping("/{id}/gpt-instructions")
+    public GameDto gptInstructions(@PathVariable Long id, @RequestBody GameDtos.GptInstructionsRequest req) {
+        return service.summary(service.setGptInstructions(id, req));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         service.delete(id);

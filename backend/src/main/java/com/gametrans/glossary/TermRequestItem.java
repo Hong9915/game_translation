@@ -48,4 +48,10 @@ public class TermRequestItem {
     private Long approvedBy;
     @Column(name = "approved_at")
     private Instant approvedAt;
+    /** GPT로 표기 확인을 마쳤는지(설계 2026-11-02). 실패하면 false로 남아 다시 누르면 다시 묻는다. */
+    @Column(name = "gpt_checked")
+    private boolean gptChecked;
+    /** GPT 표기 확인이 남긴 까닭 한 줄(없으면 null). */
+    @Column(name = "gpt_find_reason")
+    private String gptFindReason;
 }

@@ -109,6 +109,9 @@ public class CommandFixService {
         return fixPlan(out.summary(), pipeline, out.trail(), rows, sidecar, sr);
     }
 
+    /** 원래 번역에서 아무것도 지우지 않고 용어만 넣은 행. 화면이 체크를 꺼 두고 사람이 고른다. */
+    static final Pipeline.Warning INSERTED = new Pipeline.Warning("INSERT", "끼워 넣음 — 원래 번역에서 바꾼 말이 없어요. 자리가 맞는지 보세요");
+
     /** 원문 용어 바꾸기: 대상 행을 GPT로 고친 미리 보기. 고치지 못한 행은 빠진다. */
     private Plan termPlan(String summary, Pipeline pipeline, List<ToolLoop.Trace> trail, List<SheetRow> rows, PipelineRunner.ScopeRows sr) {
         OpSpec op = pipeline.term();
@@ -116,7 +119,8 @@ public class CommandFixService {
         try {
             out = termSwap.run(rows, op.src(), op.ko()).stream()
                     .map(res -> { SheetRow r = res.row(); SheetScope.SheetRef at = sr.refOf(r.id());
-                        return new Row(r.id(), r.rowNo(), r.src(), r.ko(), res.after(), List.of(OpSpec.TERM), List.of(), null, at.projectId(), at.sheet()); })
+                        List<Pipeline.Warning> warn = TermSwap.insertOnly(r.ko(), res.after()) ? List.of(INSERTED) : List.of();
+                        return new Row(r.id(), r.rowNo(), r.src(), r.ko(), res.after(), List.of(OpSpec.TERM), warn, null, at.projectId(), at.sheet()); })
                     .toList();
         } catch (org.springframework.web.client.RestClientException e) {
             throw new IllegalStateException("GPT에 연결하지 못했습니다. 잠시 뒤 다시 해 주세요.");

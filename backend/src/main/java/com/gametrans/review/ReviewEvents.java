@@ -20,7 +20,7 @@ public class ReviewEvents {
     public record SegmentUpdated(String type, Long by, SegmentRow row) {}
     public record Assigned(String type, Long by, List<Long> segmentIds, ReviewerRef assignee) {}
     /** 검수 체크·비고가 바뀐 행. null인 체크는 안 바뀐 것. noteChanged면 note(null이면 지움)를 반영한다. */
-    public record Marks(String type, Long by, List<Long> segmentIds, Boolean review1, Boolean review2, Boolean needsCheck,
+    public record Marks(String type, Long by, List<Long> segmentIds, Boolean review1, Boolean review2, Boolean review3, Boolean needsCheck,
                         Boolean confirmed, String note, boolean noteChanged, Boolean finalMark) {}
     /** 일괄 체크가 많아 행 목록을 싣지 않을 때: 그 시트의 목록·요약을 다시 읽으라는 신호. */
     public record MarksBulk(String type, Long by, String sheet) {}
@@ -46,7 +46,7 @@ public class ReviewEvents {
     public void assigned(Long projectId, Long by, List<Long> segmentIds, ReviewerRef assignee) { send(projectId, new Assigned("assigned", by, segmentIds, assignee)); }
 
     public void marks(Long projectId, Long by, List<Long> segmentIds, ReviewMarkService.Applied a, String note, boolean noteChanged) {
-        send(projectId, new Marks("marks", by, segmentIds, a.review1(), a.review2(), a.needsCheck(), a.confirmed(), note, noteChanged, a.finalMark()));
+        send(projectId, new Marks("marks", by, segmentIds, a.review1(), a.review2(), a.review3(), a.needsCheck(), a.confirmed(), note, noteChanged, a.finalMark()));
     }
 
     public void marksBulk(Long projectId, Long by, String sheet) { send(projectId, new MarksBulk("marks-bulk", by, sheet)); }

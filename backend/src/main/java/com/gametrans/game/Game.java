@@ -20,5 +20,8 @@ public class Game {
     private String name;
     /** DeepL 지시문(custom_instructions). 한 줄이 지시 하나. 비면 보내지 않는다. 새 게임은 기본 지시문으로 시작한다. */
     private String deeplInstructions = DeepLInstructions.DEFAULT;
+    /** GPT 번역·다듬기 지시문에 덧붙이는 글. 기본 지시문은 GptInstructions에 있고, 비면 덧붙임 없음. */
+    private String gptTranslateExtra;
+    private String gptPolishExtra;
     private Instant createdAt = Instant.now();
 }

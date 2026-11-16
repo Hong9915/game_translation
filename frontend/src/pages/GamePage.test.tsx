@@ -20,22 +20,22 @@ describe('GamePage', () => {
     render()
     expect(await screen.findByRole('heading', { name: '드래곤 레이드' })).toBeInTheDocument()
     expect(await screen.findByText('ItemText_v3.xlsx')).toBeInTheDocument()
-    expect(screen.getByText('2,318')).toBeInTheDocument()
+    expect(screen.getByText(/2,318행/)).toBeInTheDocument()
     expect(calls.some((c) => c.url.includes('/projects?gameId=3'))).toBe(true)
-    await userEvent.click(screen.getAllByRole('button', { name: '이어서 진행' })[0])
+    await userEvent.click(screen.getByRole('link', { name: /^ItemText_v3\.xlsx(?!.*원본)/ }))
     expect(screen.getByTestId('location')).toHaveTextContent('/review/1')
   })
 
-  it('uploads one chosen file into this game and enables the next-step button', async () => {
+  it('uploads one chosen file into this game and offers the next step', async () => {
     const { calls } = mockFetch([
       { path: '/games/3', body: game }, { path: '/projects', body: [] },
       { method: 'POST', path: '/projects', body: uploaded(9, 'new.xlsx') },
     ])
     render()
-    const next = await screen.findByRole('button', { name: '정규화로' })
-    expect(next).toBeDisabled()
+    expect(await screen.findByText('아직 올린 파일이 없습니다')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '정규화로' })).not.toBeInTheDocument()
     await userEvent.upload(screen.getByLabelText('파일 선택'), xlsx('new.xlsx'))
-    await waitFor(() => expect(next).toBeEnabled())
+    const next = await screen.findByRole('button', { name: '정규화로' })
     expect(calls.find((c) => c.method === 'POST')?.body).toMatchObject({ gameId: '3' })
     await userEvent.click(next)
     expect(screen.getByTestId('location')).toHaveTextContent('/normalize/9')
@@ -104,21 +104,39 @@ describe('GamePage', () => {
     ])
     render()
     await screen.findByText('skill_desc_cn.xlsx')
-    await userEvent.click(screen.getByRole('button', { name: 'skill_desc_cn.xlsx 삭제' }))
+    const askDelete = async () => {
+      await userEvent.click(screen.getByRole('button', { name: 'skill_desc_cn.xlsx 더 보기' }))
+      await userEvent.click(screen.getByRole('menuitem', { name: '삭제…' }))
+    }
+    await askDelete()
     const row = screen.getByRole('button', { name: '정말 삭제' }).closest('tr') as HTMLElement
     await userEvent.click(within(row).getByRole('button', { name: '취소' }))
     expect(screen.queryByRole('button', { name: '정말 삭제' })).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'skill_desc_cn.xlsx 삭제' }))
+    await askDelete()
     await userEvent.click(screen.getByRole('button', { name: '정말 삭제' }))
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.url.endsWith('/projects/2'))).toBe(true))
   })
 
-  it('expands a file to show the original download link', async () => {
+  it('offers the original download on each file row', async () => {
     mockFetch([{ path: '/games/3', body: game }, { path: '/projects', body: projects }])
     render()
-    await userEvent.click(await screen.findByRole('button', { name: 'ItemText_v3.xlsx' }))
-    expect(await screen.findByText('고친 결과는 검수 화면의 "내보내기"로 받습니다.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'ItemText_v3.xlsx' })).toHaveAttribute('href', expect.stringContaining('/projects/1/export/original'))
+    const link = await screen.findByRole('link', { name: 'ItemText_v3.xlsx 원본 내려받기' })
+    expect(link).toHaveAttribute('href', expect.stringContaining('/projects/1/export/original'))
+  })
+
+  it('shows stage badges, confirmed progress and filters by stage', async () => {
+    const reviewing = { ...projects[0], reviewRows: 2000, confirmedRows: 500 }
+    const finished = { ...projects[0], id: 5, fileName: 'done.xlsx', reviewRows: 10, confirmedRows: 10 }
+    mockFetch([{ path: '/games/3', body: game }, { path: '/projects', body: [reviewing, finished, projects[1]] }])
+    render()
+    const row = (await screen.findByText('ItemText_v3.xlsx')).closest('tr')!
+    expect(within(row).getByText('검수 중')).toBeInTheDocument()
+    expect(within(row).getByText('500 / 2,000')).toBeInTheDocument()
+    expect(within(screen.getByText('skill_desc_cn.xlsx').closest('tr')!).getByText('정규화 전')).toBeInTheDocument()
+    expect(within(screen.getByText('done.xlsx').closest('tr')!).getByText('확정 끝')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /정규화 전 1/ }))
+    expect(screen.queryByText('ItemText_v3.xlsx')).not.toBeInTheDocument()
+    expect(screen.getByText('skill_desc_cn.xlsx')).toBeInTheDocument()
   })
 
   it('sends a not-yet-normalized file to the normalize screen and a normalized one to the workspace', async () => {
@@ -126,8 +144,7 @@ describe('GamePage', () => {
     const done = { ...projects[0], id: 12, fileName: 'done.xlsx', currentStep: 3 }
     mockFetch([{ path: '/games/3', body: game }, { path: '/projects', body: [fresh, done] }])
     render()
-    const buttons = await screen.findAllByRole('button', { name: '이어서 진행' })
-    await userEvent.click(buttons[0])
+    await userEvent.click(await screen.findByRole('link', { name: /^fresh\.xlsx(?!.*원본)/ }))
     expect(screen.getByTestId('location')).toHaveTextContent('/normalize/11')
   })
 

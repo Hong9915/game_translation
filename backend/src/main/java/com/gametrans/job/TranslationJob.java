@@ -16,7 +16,7 @@ import lombok.Setter;
 @Table(name = "translation_job")
 @Getter @Setter @NoArgsConstructor
 public class TranslationJob {
-    public enum Kind { TRANSLATE, SHORTEN, EXTRACT_TERMS, SUGGEST_CANDIDATES, FIX_TERMS, COLLAPSE_TERMS }
+    public enum Kind { TRANSLATE, SHORTEN, EXTRACT_TERMS, SUGGEST_CANDIDATES, FIX_TERMS, COLLAPSE_TERMS, TEXT_KIND }
     public enum Status { RUNNING, STOPPED, DONE, FAILED }
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)

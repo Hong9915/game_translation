@@ -25,4 +25,10 @@ public final class ActivityDtos {
 
     /** 되돌리기 결과. skipped: 그 사이 바뀐 행·2차 체크 행·첫 판 행처럼 손대지 않은 행 수. */
     public record RevertResult(int reverted, int skipped) {}
+
+    /** Ctrl+Z/Ctrl+Y 되돌리기 요청. activityIds 순서대로 되돌린다. */
+    public record UndoRequest(List<Long> activityIds) {}
+
+    /** activityIds: 이번 되돌리기가 만든 REVERT 항목(파일마다 하나). 이걸 다시 되돌리면 다시 실행이 된다. */
+    public record UndoResult(int reverted, int skipped, List<Long> activityIds) {}
 }

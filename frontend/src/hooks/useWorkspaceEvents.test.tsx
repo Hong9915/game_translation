@@ -21,13 +21,13 @@ class FakeEventSource {
 const me = { id: 1, name: '형준', color: '#1f4b99' }
 const key = ['workspace-rows', 5, 'UI', 'ALL', '', 0]
 const summaryKey = ['workspace-summary', 5, 'UI']
-const row = { id: 3, rowNo: 4, pairIndex: 0, indexLabel: 'UI!4', keyText: 'K', src: '确认', en: null, existingKo: '확인', fix: '확인', changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, finalReview: false, finalMark: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0 }
+const row = { id: 3, rowNo: 4, pairIndex: 0, indexLabel: 'UI!4', keyText: 'K', src: '确认', en: null, existingKo: '확인', fix: '확인', changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, review3: false, needsCheck: false, confirmed: false, finalReview: false, finalMark: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0 }
 const seg = { id: 3, indexLabel: 'UI!4', srcText: '确认', enText: null, currentText: '확인함', lenKo: 3, lenSrc: 2, flagged: false, history: [] }
 
 function setup() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   qc.setQueryData(key, { rows: [row], page: 0, size: 500, total: 1 } satisfies WorkspaceRowsResponse)
-  qc.setQueryData(summaryKey, { sheets: [], total: 1, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, unassigned: 1, reviewers: [] })
+  qc.setQueryData(summaryKey, { sheets: [], total: 1, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, unassigned: 1, reviewers: [] })
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   return { qc, wrapper }
 }

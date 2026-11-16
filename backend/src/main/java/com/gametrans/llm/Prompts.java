@@ -30,6 +30,55 @@ public final class Prompts {
         Return ONLY JSON: {"items":[{"src":"<phrase exactly as given>","category":"<one category>"}]} with one item per input phrase.
         """;
 
+    /** 교정 규칙 문체 다시 쓰기(설계 2026-11-13 §4). */
+    static final String STYLE_FIX_SYSTEM = """
+        You edit Korean game text. Change ONLY sentence-final verb endings (~습니다, ~ㅂ니다, ~십시오, ~하세요, ~한다, ~된다) into the terse
+        noun style used in Korean game UI (개조식): e.g. 증가합니다 → 증가, 실패했습니다 → 실패, 사용하십시오 → 사용, 선택하세요 → 선택,
+        지속된다 → 지속, 얻습니다 → 얻음, 없다 → 없음.
+        Keep every other word, particle, tag (<...>), number, placeholder and punctuation mark exactly as it is.
+        Leave questions (~까?) unchanged. If a row cannot be changed that way, return its ko unchanged.
+        Return ONLY JSON: {"items":[{"index":"<index>","ko":"<edited korean>"}]} with one item per input row.
+        """;
+
+    static String styleFixUser(List<LlmClient.FixTermsRow> rows) {
+        StringBuilder sb = new StringBuilder("Rows:\n");
+        for (LlmClient.FixTermsRow r : rows)
+            sb.append("index: ").append(r.index()).append("\ncn: ").append(r.cn()).append("\nko: ").append(r.ko()).append("\n\n");
+        return sb.toString();
+    }
+
+    /** 교정 규칙 글 종류(설계 2026-11-13 §3). 시험판(gpt_kind.py)의 문구 그대로, 답 모양만 items로. */
+    static final String TEXT_KIND_SYSTEM = """
+        게임 번역 문자열의 '글 종류'를 고른다. 각 행은 중국어 원문(zh)과 한국어 번역(ko)이다. 코드 하나만 고른다.
+        E 스킬·버프·장비·능력치 효과 설명
+        I 아이템·상품 설명, 획득처·사용처 안내
+        Q 퀘스트·업적·해금 조건, 목표
+        S 시스템 알림·팝업·오류·확인 메시지
+        H 규칙·플레이 방법·도움말 설명
+        T 이야기·배경·캐릭터 소개 서술
+        D 캐릭터 대사(누군가 말하는 말)
+        N 공지·메일·이벤트 안내문
+        U 이름·버튼·짧은 UI 문구
+        JSON으로만 답한다: {"items":[{"id":"행id","code":"코드"}, ...]} 입력 행마다 하나.
+        """;
+
+    static String textKindUser(List<LlmClient.KindInput> rows) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < rows.size(); i++) {
+            LlmClient.KindInput r = rows.get(i);
+            if (i > 0) sb.append(',');
+            sb.append("{\"id\":").append(quote(r.id())).append(",\"zh\":").append(quote(cut(r.zh()))).append(",\"ko\":").append(quote(cut(r.ko()))).append('}');
+        }
+        return sb.append(']').toString();
+    }
+
+    private static String cut(String s) { return s == null ? "" : s.length() > 300 ? s.substring(0, 300) : s; }
+
+    private static String quote(String s) {
+        try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(s == null ? "" : s); }
+        catch (com.fasterxml.jackson.core.JsonProcessingException e) { throw new IllegalStateException(e); }
+    }
+
     static final String DRAFT_TERMS_SYSTEM = """
         You draft Korean glossary entries for terms from one Chinese mobile game, requested by the game's developer.
         Each term will become the fixed Korean name used everywhere in the game, so give one natural Korean rendering per term.
@@ -118,6 +167,31 @@ public final class Prompts {
           why it cannot be done with these ops.
         """;
 
+    /** 단어장 요청 GPT 표기 확인(2026-11-02): 용어 하나가 번역본에서 어떻게 옮겨졌는지 행을 열어 보고 고른다. */
+    public static final String TERM_FIND_SYSTEM = """
+        You help a Korean reviewer of a Chinese→Korean mobile game localization. Find how ONE source term is rendered
+        in the existing Korean translation of this game. Use find_rows to look at rows (source and Korean pairs), then call finish.
+        Rules:
+        - A rendering is only the Korean fragment that translates the term itself. Never include translations of other words
+          in the same row. Example: 公会战简单难度buff → 부족전 쉬움 난이도 버프 — the rendering of 公会战 is 부족전, not 버프.
+        - If the term is a whole name, the rendering is the whole matching Korean name, not its pieces.
+          Example: 爱神·丘比特 → 홍실의 연인·큐피트 (one rendering), not 홍실 / 연인 / 큐피트.
+        - Different renderings of the same term are separate entries (e.g. 교환소 and 교환 상점). Spacing variants are separate too.
+          Most used first.
+        - Every rendering must appear verbatim in the Korean of a row whose source contains the term. Never invent one.
+        - Give the bare form without trailing particles or endings (은/는/이/가/을/를/의/에/에서/으로 …): 부족전, not 부족전은.
+        - If the term is not translated anywhere, call finish with none: true and a reason.
+        - reason: one short Korean sentence (e.g. why a word in the same row was left out). Optional.
+        """;
+
+    public static String termFindUser(String src, String category, List<String> samples, int total) {
+        StringBuilder sb = new StringBuilder("Term: ").append(src).append("\nCategory: ").append(category)
+                .append("\nRows whose source contains the term: ").append(total)
+                .append("\n\nSample pairs (source ⇒ Korean (×times), a real newline is shown as ⏎):\n");
+        for (String s : samples) sb.append("- ").append(s.replace("\n", "⏎")).append('\n');
+        return sb.toString();
+    }
+
     public static String commandUser(String command, List<String> samples) {
         StringBuilder sb = new StringBuilder("Command: ").append(command).append("\n\nSample Korean translations from this sheet (a real newline is shown as ⏎):\n");
         for (String s : samples) sb.append("- ").append(s.replace("\n", "⏎")).append('\n');
@@ -193,12 +267,29 @@ public final class Prompts {
             When you FIX, change as little as possible: keep the existing sentence structure, ending style and every part
             that was already right. Insert a glossary term as a natural part of the sentence with correct particles; never
             produce an awkward or redundant sentence just to include it. Keep placeholders and tags exactly as in the source.
+            """ + VERDICT_FORMAT);
+        if (req.instructions() != null && !req.instructions().isBlank()) sb.append("Additional instructions: ").append(req.instructions()).append('\n');
+        appendGlossary(sb, req.glossary());
+        return sb.toString();
+    }
+
+    /** 교정과 다듬기가 같이 쓰는 응답 형식 줄. */
+    static final String VERDICT_FORMAT = """
             Return ONLY JSON: {"items":[{"index":"<same index>","verdict":"KEEP"} or
             {"index":"<same index>","verdict":"FIX","ko":"<corrected korean>","reason":"<MISTRANSLATION|BROKEN|PLACEHOLDER|GLOSSARY>: <짧은 한국어 설명>"}]}
             with one item per input row.
-            """);
-        if (req.instructions() != null && !req.instructions().isBlank()) sb.append("Additional instructions: ").append(req.instructions()).append('\n');
+            """;
+
+    /**
+     * GPT로 다듬기(2026-11-13). 게임의 다듬기 지시문(req.instructions = 기본 + 덧붙임)을 맨 앞에 두고, 단어장, 응답 형식은 교정과 같다.
+     * 행 입력(cn·en·지금 한국어 ko)도 교정과 같은 proofreadUser를 쓴다.
+     */
+    static String polishSystem(LlmClient.ProofreadBatchRequest req) {
+        StringBuilder sb = new StringBuilder();
+        if (req.instructions() != null && !req.instructions().isBlank()) sb.append(req.instructions().strip()).append("\n\n");
+        sb.append("Each row has the Simplified Chinese source (cn), an optional English text (en) and the current Korean (ko).\n");
         appendGlossary(sb, req.glossary());
+        sb.append(VERDICT_FORMAT);
         return sb.toString();
     }
 
@@ -271,9 +362,14 @@ public final class Prompts {
         You are a Korean game localization editor. The reviewer decided that a Chinese source term must be translated as one
         given Korean word everywhere. Each row has the Simplified Chinese source (cn), an optional English text (en), the
         current Korean (ko) and the rule (need: source term → required Korean).
-        In ko, find how that source term is rendered now — a different Korean word, an English word, Chinese left
-        untranslated, or dropped entirely — and rewrite only that part so the required Korean appears exactly as written.
-        If the term was dropped, put it back where it belongs. Numbers and codes attached to the term are written the way
+        In ko, find how that source term is rendered now and rewrite only that part so the required Korean appears exactly
+        as written. The rendering is usually another Korean word with the same meaning — a synonym (任务 → 임무, 미션, 의뢰,
+        과제), possibly inside a compound (cn 悬赏任务, ko 현상금 의뢰 → 현상금 퀘스트) — or an English word, Chinese left
+        untranslated, or a misspelling of the required word. Replace that word in place; do not keep it and add the required
+        word somewhere else (wrong: 현상금 의뢰 완료 속도 퀘스트 가속).
+        Only when ko has no word for the term at all, insert the required word where the source puts it, attached to the
+        word it modifies (cn 累充任务活动, ko 누적 충전 이벤트 → 누적 충전 퀘스트 이벤트; wrong: 누적 충전 이벤트 퀘스트).
+        If you cannot tell where it belongs, return ko unchanged. Numbers and codes attached to the term are written the way
         the source writes them, with a space between the Korean word and the number (cn 关卡 54-14, ko Level 54·14 →
         스테이지 54-14; cn 通关关卡2-26解锁, ko 2-26 클리어 후 해제 → 스테이지 2-26 클리어 후 해제).
         If ko is still the untranslated Chinese source, translate the whole text into natural Korean using the required word

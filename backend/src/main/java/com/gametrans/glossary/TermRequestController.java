@@ -39,6 +39,10 @@ public class TermRequestController {
     @PostMapping("/glossary/requests/{id}/generate")
     public RequestDto generate(@PathVariable Long id) { return service.generate(id); }
 
+    /** 승인 안 된·아직 확인 안 한 항목의 번역본 속 표기를 GPT로 다시 찾는다. 번역본에 없다고 나온 항목은 초안까지 만든다. */
+    @PostMapping("/glossary/requests/{id}/find")
+    public RequestDto find(@PathVariable Long id) { return service.find(id); }
+
     @PostMapping("/glossary/requests/{id}/approve")
     public ApproveResult approve(@PathVariable Long id, @RequestBody ApproveRequest req,
                                  @RequestHeader(value = "X-Reviewer-Id", required = false) Long reviewerId) {

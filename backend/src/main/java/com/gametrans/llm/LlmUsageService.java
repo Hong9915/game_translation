@@ -86,7 +86,7 @@ public class LlmUsageService implements UsageSink {
         return new UsageSummary(calls, in, outT, reasoning, cost, priced, byStage);
     }
 
-    Price priceFor(String model) {
+    public Price priceFor(String model) {
         if (model == null) return null;
         String m = model.toLowerCase(Locale.ROOT);
         if (prices.containsKey(m)) return prices.get(m);

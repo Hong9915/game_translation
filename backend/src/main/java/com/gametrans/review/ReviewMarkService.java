@@ -21,7 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ReviewMarkService {
     /** null인 칸은 바꾸지 않는다. note는 trim해서 빈 글이면 지운다. */
-    public record MarksRequest(Boolean review1, Boolean review2, Boolean needsCheck, Boolean confirmed, String note, Boolean finalMark) {}
+    public record MarksRequest(Boolean review1, Boolean review2, Boolean review3, Boolean needsCheck, Boolean confirmed, String note, Boolean finalMark) {}
 
     /**
      * 머리글 일괄 체크. ids가 있으면 그 행만(쪽 보기에서 화면에 보이는 행 — 서버가 쪽을 다시 계산하면 그 사이 체크로
@@ -29,14 +29,14 @@ public class ReviewMarkService {
      * ids도 그 프로젝트·시트의 행으로 좁힌다.
      */
     public record BulkMarksRequest(String sheet, RowFilter filter, String q, SearchIn qIn, Integer page, Integer size, List<Long> ids,
-                                   Boolean review1, Boolean review2, Boolean needsCheck, Boolean confirmed, Boolean finalMark){}
+                                   Boolean review1, Boolean review2, Boolean review3, Boolean needsCheck, Boolean confirmed, Boolean finalMark){}
 
     /** 이보다 많이 바꾸면 행 목록 대신 "그 시트를 다시 읽으라"는 신호만 보낸다. update도 이 크기로 나눠 보낸다. */
     static final int BULK_EVENT_LIMIT = 1000;
 
     /** 실제로 쓸 체크 값. null은 안 바꿈. */
-    public record Applied(Boolean review1, Boolean review2, Boolean needsCheck, Boolean confirmed, Boolean finalMark) {
-        boolean empty() { return review1 == null && review2 == null && needsCheck == null && confirmed == null && finalMark == null; }
+    public record Applied(Boolean review1, Boolean review2, Boolean review3, Boolean needsCheck, Boolean confirmed, Boolean finalMark) {
+        boolean empty() { return review1 == null && review2 == null && review3 == null && needsCheck == null && confirmed == null && finalMark == null; }
     }
 
     private final SegmentRepository segments;
@@ -63,14 +63,14 @@ public class ReviewMarkService {
     /** 범위 판(게임 화면). ids도 범위 안 행으로 좁힌다. req.sheet는 보지 않는다. */
     @Transactional
     public int bulk(com.gametrans.workspace.SheetScope scope, BulkMarksRequest req, Long reviewerId) {
-        Applied a = new Applied(req.review1(), req.review2(), req.needsCheck(), req.confirmed(), req.finalMark());
+        Applied a = new Applied(req.review1(), req.review2(), req.review3(), req.needsCheck(), req.confirmed(), req.finalMark());
         if (a.empty()) throw new IllegalArgumentException("바꿀 체크를 고르세요.");
         Reviewer who = reviewers.resolve(reviewerId);
         List<Long> ids = req.ids() != null
                 ? workspace.idsWithin(scope, req.ids())
                 : workspace.ids(scope, req.filter(), req.q(), req.qIn(), who == null ? null : who.getId(), req.page(), req.size());
         for (int i = 0; i < ids.size(); i += BULK_EVENT_LIMIT)
-            segments.updateMarks(ids.subList(i, Math.min(i + BULK_EVENT_LIMIT, ids.size())), a.review1(), a.review2(), a.needsCheck(), a.confirmed(), a.finalMark());
+            segments.updateMarks(ids.subList(i, Math.min(i + BULK_EVENT_LIMIT, ids.size())), a.review1(), a.review2(), a.review3(), a.needsCheck(), a.confirmed(), a.finalMark());
         Long by = who == null ? null : who.getId();
         if (ids.isEmpty()) return 0;
         if (scope.singleProject()) {
@@ -89,10 +89,10 @@ public class ReviewMarkService {
     public RowDto update(Long segmentId, MarksRequest req, Long reviewerId) {
         Reviewer who = reviewers.resolve(reviewerId);
         if (!segments.existsById(segmentId)) throw new NotFoundException("세그먼트를 찾을 수 없습니다: " + segmentId);
-        Applied a = new Applied(req.review1(), req.review2(), req.needsCheck(), req.confirmed(), req.finalMark());
+        Applied a = new Applied(req.review1(), req.review2(), req.review3(), req.needsCheck(), req.confirmed(), req.finalMark());
         boolean noteChanged = req.note() != null;
         String note = noteChanged && !req.note().isBlank() ? req.note().trim() : null;
-        if (!a.empty()) segments.updateMarks(List.of(segmentId), a.review1(), a.review2(), a.needsCheck(), a.confirmed(), a.finalMark());
+        if (!a.empty()) segments.updateMarks(List.of(segmentId), a.review1(), a.review2(), a.review3(), a.needsCheck(), a.confirmed(), a.finalMark());
         if (noteChanged) segments.updateNote(segmentId, note);
         // 벌크 update가 영속성 컨텍스트를 비웠으므로 새로 읽어 방금 쓴 값을 본다
         Segment fresh = segments.findById(segmentId).orElseThrow();

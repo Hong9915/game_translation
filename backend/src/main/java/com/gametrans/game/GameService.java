@@ -2,6 +2,7 @@ package com.gametrans.game;
 
 import com.gametrans.common.NotFoundException;
 import com.gametrans.game.GameDtos.GameDto;
+import com.gametrans.game.GameDtos.GptInstructionsRequest;
 import com.gametrans.memory.MemoryEntryRepository;
 import com.gametrans.project.Project;
 import com.gametrans.project.ProjectRepository;
@@ -70,6 +71,15 @@ public class GameService {
         return g;
     }
 
+    /** GPT 번역·다듬기 덧붙임을 바꾼다. null인 칸은 그대로, 빈 글은 덧붙임 없음으로 지운다. */
+    @Transactional
+    public Game setGptInstructions(Long id, GptInstructionsRequest req) {
+        Game g = get(id);
+        if (req.translate() != null) g.setGptTranslateExtra(GptInstructions.normalize(req.translate()));
+        if (req.polish() != null) g.setGptPolishExtra(GptInstructions.normalize(req.polish()));
+        return g;
+    }
+
     /** 게임과 딸린 파일(저장 파일 포함), 번역 메모리를 모두 지운다. 진행 중인 작업이 있으면 거부한다. */
     @Transactional
     public void delete(Long id) {
@@ -89,11 +99,16 @@ public class GameService {
             last.put(gid, (Instant) row[2]);
         }
         Map<String, Long> memory = countMap(entries.countByGame());
+        Map<Long, long[]> progress = new HashMap<>();   // [rows, confirmed]
+        for (Object[] row : projects.reviewProgressByGame())
+            progress.put(((Number) row[0]).longValue(), new long[] {((Number) row[1]).longValue(), ((Number) row[2]).longValue()});
         List<GameDto> out = new ArrayList<>();
         for (Game g : games.findAllByOrderByCreatedAtDesc()) {
             long[] pc = projectAcc.get(g.getId());
+            long[] pr = progress.getOrDefault(g.getId(), new long[2]);
             out.add(new GameDto(g.getId(), g.getName(), pc == null ? 0 : pc[0],
-                    memory.getOrDefault(g.getName(), 0L), last.get(g.getId()), g.getCreatedAt(), g.getDeeplInstructions()));
+                    memory.getOrDefault(g.getName(), 0L), last.get(g.getId()), g.getCreatedAt(), g.getDeeplInstructions(), pr[0], pr[1],
+                    GptInstructions.TRANSLATE_BASE, g.getGptTranslateExtra(), GptInstructions.POLISH_BASE, g.getGptPolishExtra()));
         }
         out.sort(Comparator.comparing((GameDto d) -> d.lastUploadedAt() == null ? Instant.EPOCH : d.lastUploadedAt()).reversed()
                 .thenComparing(GameDto::createdAt, Comparator.reverseOrder()));
@@ -102,7 +117,8 @@ public class GameService {
 
     public GameDto summary(Game g) {
         return list().stream().filter(d -> d.id().equals(g.getId())).findFirst()
-                .orElse(new GameDto(g.getId(), g.getName(), 0, 0, null, g.getCreatedAt(), g.getDeeplInstructions()));
+                .orElse(new GameDto(g.getId(), g.getName(), 0, 0, null, g.getCreatedAt(), g.getDeeplInstructions(), 0, 0,
+                        GptInstructions.TRANSLATE_BASE, g.getGptTranslateExtra(), GptInstructions.POLISH_BASE, g.getGptPolishExtra()));
     }
 
     private static Map<String, Long> countMap(List<Object[]> rows) {

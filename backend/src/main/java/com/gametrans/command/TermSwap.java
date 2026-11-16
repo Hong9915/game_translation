@@ -60,6 +60,17 @@ public class TermSwap {
         return !a.equals(before.trim()) && a.contains(ko) && PlaceholderCheck.matches(before.trim(), a);
     }
 
+    /**
+     * 끼워 넣기만 했나: 고치기 전 글자(공백 빼고)가 고친 글에 차례대로 모두 남아 있으면 지운 글자 없이 넣기만 한 것이다.
+     * GPT가 원래 자리의 다른 말(의뢰·미션)을 못 알아보고 엉뚱한 곳에 용어를 넣은 결과가 이렇게 나온다(2026-11-02 任务 → 퀘스트).
+     */
+    public static boolean insertOnly(String before, String after) {
+        String b = before.replaceAll("\\s+", ""), a = after.replaceAll("\\s+", "");
+        int i = 0;
+        for (int j = 0; j < a.length() && i < b.length(); j++) if (a.charAt(j) == b.charAt(i)) i++;
+        return i == b.length();
+    }
+
     /** rows 가운데 대상인 행을 고친다. 고치지 못한 행(GPT 오류·거절·확인 실패)은 빠진다. */
     public List<Result> run(List<SheetRow> rows, String src, String ko) {
         Map<String, List<SheetRow>> groups = new LinkedHashMap<>();

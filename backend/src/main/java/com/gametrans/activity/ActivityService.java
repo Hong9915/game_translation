@@ -6,6 +6,7 @@ import com.gametrans.activity.ActivityDtos.FeedResponse;
 import com.gametrans.activity.ActivityDtos.RowItem;
 import com.gametrans.activity.ActivityDtos.RevertResult;
 import com.gametrans.activity.ActivityDtos.RowsResponse;
+import com.gametrans.activity.ActivityDtos.UndoResult;
 import com.gametrans.activity.ActivityRepository.RevisionRowView;
 import com.gametrans.common.NotFoundException;
 import com.gametrans.normalize.Segment;
@@ -13,13 +14,25 @@ import com.gametrans.normalize.SegmentRepository;
 import com.gametrans.project.Project;
 import com.gametrans.project.ProjectRepository;
 import com.gametrans.review.BulkFixWriter;
+import com.gametrans.review.ReviewEvents;
+import com.gametrans.review.TermMissService;
 import com.gametrans.reviewer.Reviewer;
 import com.gametrans.reviewer.ReviewerService;
+import com.gametrans.text.GlossaryCheck;
+import com.gametrans.translate.RevisionService;
+import com.gametrans.translate.TranslationRevision;
+import com.gametrans.translate.TranslationRevisionRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -35,13 +48,23 @@ public class ActivityService {
     private final ReviewerService reviewers;
     private final SegmentRepository segments;
     private final BulkFixWriter writer;
+    private final RevisionService revisions;
+    private final TranslationRevisionRepository revisionRepo;
+    private final TermMissService termMiss;
+    private final ReviewEvents events;
+    @PersistenceContext private EntityManager em;
 
-    public ActivityService(ActivityRepository repo, ProjectRepository projects, ReviewerService reviewers, SegmentRepository segments, BulkFixWriter writer) {
+    public ActivityService(ActivityRepository repo, ProjectRepository projects, ReviewerService reviewers, SegmentRepository segments, BulkFixWriter writer,
+                           RevisionService revisions, TranslationRevisionRepository revisionRepo, TermMissService termMiss, ReviewEvents events) {
         this.repo = repo;
         this.projects = projects;
         this.reviewers = reviewers;
         this.segments = segments;
         this.writer = writer;
+        this.revisions = revisions;
+        this.revisionRepo = revisionRepo;
+        this.termMiss = termMiss;
+        this.events = events;
     }
 
     /** 프로젝트 단위 행동 하나. 부르는 쪽 트랜잭션에 합류한다 — 저장이 롤백되면 이것도 같이 사라진다. */
@@ -139,6 +162,128 @@ public class ActivityService {
         int reverted = writer.write(candidates, s -> before.get(s.getId()), reviewers.exists(reviewerId) ? reviewerId : null,
                 lazyPerProject(Kind.REVERT, reviewerId, Map.of("revertOf", activityId)));
         return new RevertResult(reverted, before.size() - reverted);
+    }
+
+    /**
+     * Ctrl+Z/Ctrl+Y 되돌리기(2026-11-13): activityIds를 순서대로 한 트랜잭션에서 되돌린다. revert와 같이 그 사이 바뀐 행·확정 행(JOSA_FIX 빼고)·제외 행은 건너뛴다.
+     * revert와 달리 첫 판 행(원래 빈 칸)도 되돌린다 — 이 항목이 쓴 판부터 모두 지워 빈 칸으로 돌린다. 그 뒤 다른 항목(뒤 저장, 앞선 되돌리기의 REVERT)이
+     * 쓴 판도 같이 지워지므로, 지운 판 전체(글·작성자·검토자·항목 id)를 순서대로 REVERT 항목의 detail.cleared에 남긴다.
+     * detail.cleared가 있는 항목을 되돌리면(= 다시 실행) 지금도 빈 칸인 행에만 그 판들을 순서대로 다시 쓰고, 각 판을 원래 항목에 다시 매단다.
+     * 그래서 원래 항목의 피드 행이 돌아오고, 뒤 항목의 되돌리기·다시 실행도 그대로 이어진다 — 되살린 판의 글·순서가 지우기 전과 같으니
+     * 뒤 항목들의 "지금 본문 = 그 항목의 마지막 본문" 검사도 지우기 전과 똑같이 맞는다. 다시 실행이 돌려주는 id에는 새 REVERT 대신
+     * 빈 칸을 만든 원래 항목(사슬 첫 판의 항목)이 들어간다 — 그 다시 실행을 또 되돌리면 원래 항목을 되돌려 다시 빈 칸이 된다.
+     * 원래 항목·검토자가 그 사이 지워졌으면 null로 매단다(첫 판만은 새 REVERT에 매달아 되돌릴 길을 남긴다). 단어장 편집은 판이 없으니 조용히 넘어간다.
+     * 넘어온 순서와 상관없이 중복을 걷고 최신 항목(id 큰 것)부터 되돌린다 — 같은 행을 여러 번 고친 걸 한 번에 되돌려도, 돌려준 REVERT id로
+     * 다시 실행해도 마지막 판부터 거꾸로 풀려야 "그 사이 바뀐 행"으로 걸리지 않는다.
+     */
+    @Transactional
+    public UndoResult undo(List<Long> activityIds, Long reviewerId) {
+        Long rid = reviewers.exists(reviewerId) ? reviewerId : null;
+        int reverted = 0, skipped = 0;
+        Set<Long> made = new LinkedHashSet<>();
+        Set<Long> touched = new LinkedHashSet<>();
+        List<Long> ordered = activityIds.stream().filter(Objects::nonNull).distinct().sorted(Comparator.reverseOrder()).toList();
+        for (Long id : ordered) {
+            // 앞 항목이 쓰고 지운 판이 트리거로 latest_ko에 반영됐으니, 세그먼트를 옛 사본이 아니라 DB에서 다시 읽게 한다.
+            em.flush();
+            em.clear();
+            Activity a = repo.findById(id).orElseThrow(() -> new NotFoundException("변경 내역을 찾을 수 없습니다: " + id));
+            if (a.getKind() == Kind.GLOSSARY_EDIT) continue;
+            Function<Long, Long> lazy = lazyPerProject(Kind.REVERT, reviewerId, Map.of("revertOf", id, "undo", true));
+            Function<Long, Long> activityFor = pid -> {
+                Long aid = lazy.apply(pid);
+                made.add(aid);
+                return aid;
+            };
+            Map<Long, List<Map<String, Object>>> cleared = new LinkedHashMap<>();
+            int total = 0, done = 0;
+
+            // 1) 이 항목이 쓴 판: before(첫 판 이전 본문, 없으면 null)와 after(마지막 판 본문). putIfAbsent는 null 값을 없는 것으로 보므로 containsKey로 첫 판만 잡는다.
+            Map<Long, String> before = new LinkedHashMap<>();
+            Map<Long, String> after = new HashMap<>();
+            for (RevisionRowView v : repo.rowsOf(id, -1L, Integer.MAX_VALUE, 0)) {
+                if (!before.containsKey(v.getSegmentId())) before.put(v.getSegmentId(), v.getPrevText());
+                after.put(v.getSegmentId(), v.getNextText());
+            }
+            total += before.size();
+            if (!before.isEmpty()) {
+                Map<Long, Long> firstRev = new HashMap<>();
+                for (TranslationRevision r : revisionRepo.findByActivityIdOrderByIdAsc(id)) firstRev.putIfAbsent(r.getSegmentId(), r.getId());
+                boolean skipConfirmed = a.getKind() != Kind.JOSA_FIX;
+                List<Segment> candidates = new ArrayList<>();
+                for (Segment s : segments.findAllById(before.keySet())) {
+                    if (s.isSkipped() || (skipConfirmed && s.isConfirmed()) || !after.get(s.getId()).equals(s.getLatestKo())) continue;
+                    if (before.get(s.getId()) != null) { candidates.add(s); continue; }
+                    // 첫 판 행: 이 항목의 첫 판부터 모두 지운다. 다시 실행 때 그대로 되살리게 지우는 판 전체를 순서대로 남긴다.
+                    Long from = firstRev.get(s.getId());
+                    List<Map<String, Object>> chain = new ArrayList<>();
+                    for (TranslationRevision r : revisionRepo.findBySegmentIdOrderByVersionAsc(s.getId())) {
+                        if (r.getId() < from) continue;
+                        Map<String, Object> e = new HashMap<>();
+                        e.put("text", r.getText());
+                        e.put("author", r.getAuthor().name());
+                        e.put("reviewerId", r.getReviewerId());
+                        e.put("activityId", r.getActivityId());
+                        chain.add(e);
+                    }
+                    Long aid = activityFor.apply(s.getProjectId());
+                    revisionRepo.deleteBySegmentIdAndIdGreaterThanEqual(s.getId(), from);
+                    segments.updateTermMiss(s.getId(), null);
+                    cleared.computeIfAbsent(aid, k -> new ArrayList<>()).add(Map.of("segmentId", s.getId(), "chain", chain));
+                    touched.add(s.getProjectId());
+                    done++;
+                }
+                done += writer.write(candidates, s -> before.get(s.getId()), rid, activityFor);
+            }
+
+            // 2) 빈 칸으로 돌린 되돌리기를 다시 되돌림(Ctrl+Y): 지금도 빈 칸인 행에만 지운 판들을 순서대로 다시 쓰고 원래 항목에 매단다.
+            if (a.getDetail().get("cleared") instanceof List<?> list) {
+                Map<Long, Map<?, ?>> bySegment = new LinkedHashMap<>();
+                for (Object o : list) if (o instanceof Map<?, ?> m) bySegment.put(((Number) m.get("segmentId")).longValue(), m);
+                total += bySegment.size();
+                Map<Long, Map<String, String>> glossaries = new HashMap<>();
+                Map<Long, Boolean> activityExists = new HashMap<>();
+                Map<Long, Boolean> reviewerExists = new HashMap<>();
+                for (Segment s : segments.findAllById(bySegment.keySet())) {
+                    if (s.isSkipped() || s.isConfirmed() || revisions.current(s.getId()).isPresent()) continue;
+                    if (!(bySegment.get(s.getId()).get("chain") instanceof List<?> chain) || chain.isEmpty()) continue;
+                    String text = null;
+                    boolean first = true;
+                    for (Object o : chain) {
+                        Map<?, ?> e = (Map<?, ?>) o;
+                        text = (String) e.get("text");
+                        TranslationRevision.Author author = TranslationRevision.Author.valueOf((String) e.get("author"));
+                        Long owner = e.get("activityId") instanceof Number n ? n.longValue() : null;
+                        if (owner != null && !activityExists.computeIfAbsent(owner, repo::existsById)) owner = null;
+                        Long by = e.get("reviewerId") instanceof Number n ? n.longValue() : null;
+                        if (by != null && !reviewerExists.computeIfAbsent(by, reviewers::exists)) by = null;
+                        if (first) {
+                            if (owner == null) owner = activityFor.apply(s.getProjectId());
+                            else made.add(owner);
+                            first = false;
+                        }
+                        revisions.add(s.getId(), text, author, by, owner);
+                    }
+                    Map<String, String> g = glossaries.computeIfAbsent(s.getProjectId(), termMiss::glossaryFor);
+                    segments.updateTermMiss(s.getId(), GlossaryCheck.format(GlossaryCheck.missing(s.getSrcText(), text, g)));
+                    touched.add(s.getProjectId());
+                    done++;
+                }
+            }
+
+            for (Map.Entry<Long, List<Map<String, Object>>> e : cleared.entrySet()) {
+                Activity rev = repo.findById(e.getKey()).orElseThrow();
+                Map<String, Object> d = new HashMap<>(rev.getDetail());
+                d.put("cleared", e.getValue());
+                rev.setDetail(d);
+                repo.save(rev);
+            }
+            reverted += done;
+            skipped += total - done;
+        }
+        // 판을 지우거나 되살린 프로젝트만 여기서 알린다 — writer.write는 자기가 바꾼 프로젝트를 이미 알린다.
+        for (Long pid : touched) events.refresh(pid, reviewerId);
+        return new UndoResult(reverted, skipped, new ArrayList<>(made));
     }
 
     private static boolean hasPrimary(Kind k) { return k == Kind.EDIT || k == Kind.RETRANSLATE; }

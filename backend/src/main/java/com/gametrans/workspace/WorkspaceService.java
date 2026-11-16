@@ -196,14 +196,14 @@ public class WorkspaceService {
             fileNames.computeIfAbsent(r.projectId(), pid -> projects.findById(pid).map(com.gametrans.project.Project::getFileName).orElse(""));
         }
         List<SheetSummary> sheets = new ArrayList<>();
-        long total = 0, changed = 0, review1 = 0, review2 = 0, needsCheck = 0, confirmed = 0, josa = 0, josaPending = 0, finalMark = 0;
+        long total = 0, changed = 0, review1 = 0, review2 = 0, review3 = 0, needsCheck = 0, confirmed = 0, josa = 0, josaPending = 0, finalMark = 0;
         Map<Long, long[]> perAssignee = new LinkedHashMap<>();   // assigneeId(null은 -1) → [assigned, reviewed]
         for (SheetScope.SheetRef r : listed) {
             boolean inScope = counted.test(r);
             SheetSummary s = sheetSummary(r, byProject.get(r.projectId()).get(r.sheet()), fileNames.get(r.projectId()), inScope);
             sheets.add(s);
             if (!inScope) continue;
-            total += s.total(); changed += s.changed(); review1 += s.review1(); review2 += s.review2(); needsCheck += s.needsCheck(); confirmed += s.confirmed(); josa += s.josa(); josaPending += s.josaPending(); finalMark += s.finalMark();
+            total += s.total(); changed += s.changed(); review1 += s.review1(); review2 += s.review2(); review3 += s.review3(); needsCheck += s.needsCheck(); confirmed += s.confirmed(); josa += s.josa(); josaPending += s.josaPending(); finalMark += s.finalMark();
             for (SegmentRepository.AssigneeCount c : segments.countByAssignee(r.projectId(), r.sheet())) {
                 long[] acc = perAssignee.computeIfAbsent(c.getAssigneeId() == null ? -1L : c.getAssigneeId(), k -> new long[2]);
                 acc[0] += c.getAssigned(); acc[1] += c.getReviewed();
@@ -218,7 +218,7 @@ public class WorkspaceService {
             if (r == null) unassigned += e.getValue()[0];
             else people.add(new ReviewerSummary(ReviewerService.ref(r), e.getValue()[0], e.getValue()[1]));
         }
-        return new Summary(sheets, total, changed, review1, review2, needsCheck, confirmed, unassigned, people, josa, josaPending, finalMark);
+        return new Summary(sheets, total, changed, review1, review2, review3, needsCheck, confirmed, unassigned, people, josa, josaPending, finalMark);
     }
 
     /**
@@ -226,9 +226,9 @@ public class WorkspaceService {
      * 다시 읽으므로 시트마다 도는 이 count가 게임 전체를 매번 훑게 된다. 나머지 수치는 countBySheet 한 번에 나온다.
      */
     private SheetSummary sheetSummary(SheetScope.SheetRef r, SegmentRepository.SheetCount c, String fileName, boolean countChanged) {
-        if (c == null) return new SheetSummary(r.sheet(), 0, 0, 0, 0, 0, 0, 0, 0, r.configId(), r.projectId(), fileName, r.finalReview(), 0);
+        if (c == null) return new SheetSummary(r.sheet(), 0, 0, 0, 0, 0, 0, 0, 0, 0, r.configId(), r.projectId(), fileName, r.finalReview(), 0);
         long changed = !countChanged ? 0 : segments.count(SegmentSpecs.inSheet(r.projectId(), r.sheet()).and(SegmentSpecs.filter(RowFilter.CHANGED, null)));
-        return new SheetSummary(r.sheet(), c.getTotal(), changed, c.getReview1(), c.getReview2(), c.getNeedsCheck(), c.getConfirmed(),
+        return new SheetSummary(r.sheet(), c.getTotal(), changed, c.getReview1(), c.getReview2(), c.getReview3(), c.getNeedsCheck(), c.getConfirmed(),
                 c.getJosa(), c.getJosaPending(), r.configId(), r.projectId(), fileName, r.finalReview(), c.getFinalMark());
     }
 
@@ -255,7 +255,7 @@ public class WorkspaceService {
                 com.gametrans.text.GlossaryCheck.parse(s.getTermMiss()),
                 s.isJosaIgnored() ? List.of() : com.gametrans.josa.JosaHints.parse(s.getJosaHint()),
                 ReviewerService.ref(s.getAssigneeId() == null ? null : who.get(s.getAssigneeId())),
-                s.isReview1(), s.isReview2(), s.isNeedsCheck(), s.isConfirmed(), s.isFinalReview(), s.isFinalMark(), s.getNote(),
+                s.isReview1(), s.isReview2(), s.isReview3(), s.isNeedsCheck(), s.isConfirmed(), s.isFinalReview(), s.isFinalMark(), s.getNote(),
                 ReviewerService.ref(editor), editor == null ? null : last.getCreatedAt(), dupCount,
                 history.stream().map(r -> RevisionDto.of(r, who)).toList(), s.getProjectId(), s.getSheetName());
     }

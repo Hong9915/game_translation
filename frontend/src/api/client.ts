@@ -1,9 +1,11 @@
 import type {
-  AssignRequest, ExportPreview, Game, NormalizeRequest, NormalizeResponse, PresenceEntry, Project,
+  BatchTranslateResult, TranslateEngine, PolishResult, SaveBatchItem, SaveBatchResult,
+  AssignRequest, ExportPreview, Game, GameMemo, NormalizeRequest, NormalizeResponse, PresenceEntry, Project,
   MarkKey, MarksPatch, QuickTranslateRequest, QuickTranslateResult, ReviewerRef, RowFilter, RowShortenResult, SearchIn, WorkspaceRow, WorkspaceRowsResponse, WorkspaceSummary,
   SaveResult, SegmentRow, SheetsResponse, UsageSummary,
   GlossaryEntry, GlossaryPhraseCategory, GlossaryRecommendation, GlossaryRequest, GlossarySaveResult, GlossarySuggestResult, GlossaryVariant, GlossaryUnifyRequest, GlossarySpacingItem, TagSpacingItem, TagSpacingRow, CommandPlan, OpSpec, CommandPreset, RowHistoryEntry,
   TermApproveItem, TermApproveResult, TermRequestDetail, TermRequestSummary,
+  CorrectionRule, RuleList, RulePreview, RulePreviewRow, RuleApplyRequest, RuleApplyResult,
   ActivityFeedResponse, ActivityRevertResult, ActivityRowsResponse, JosaKind, JosaPreview, JobDto, TranslateStartRequest,
 } from './types'
 import { loadReviewer } from '../lib/reviewer'
@@ -105,6 +107,12 @@ export const api = {
     rename: (id: number, name: string) => request<Game>(`/games/${id}`, { method: 'PATCH', ...json({ name }) }),
     delete: (id: number) => request<void>(`/games/${id}`, { method: 'DELETE' }),
     setDeepLInstructions: (id: number, text: string) => request<Game>(`/games/${id}/deepl-instructions`, { method: 'PUT', ...json({ text }) }),
+    setGptInstructions: (id: number, body: { translate?: string; polish?: string }) =>
+      request<Game>(`/games/${id}/gpt-instructions`, { method: 'PUT', ...json(body) }),
+    memo: (id: number) => request<GameMemo>(`/games/${id}/memo`),
+    /** keepalive는 창이 닫히는 순간의 저장용 — 창이 사라져도 요청이 끝까지 간다(본문 64KB 한도). */
+    saveMemo: (id: number, body: { content: string; baseVersion: number }, opts?: { keepalive: boolean }) =>
+      request<GameMemo>(`/games/${id}/memo`, { method: 'PUT', ...json(body), ...opts }),
     quickTranslate: (id: number, body: QuickTranslateRequest) => request<QuickTranslateResult>(`/games/${id}/quick-translate`, { method: 'POST', ...json(body) }),
   },
   projects: {
@@ -130,6 +138,8 @@ export const api = {
     list: (gameId: number) => request<TermRequestSummary[]>(`/games/${gameId}/glossary/requests`),
     get: (id: number) => request<TermRequestDetail>(`/glossary/requests/${id}`),
     generate: (id: number) => request<TermRequestDetail>(`/glossary/requests/${id}/generate`, { method: 'POST' }),
+    /** 승인 안 된·아직 확인 안 한 항목의 번역본 속 표기를 GPT로 다시 찾는다. */
+    find: (id: number) => request<TermRequestDetail>(`/glossary/requests/${id}/find`, { method: 'POST' }),
     approve: (id: number, items: TermApproveItem[]) =>
       request<TermApproveResult>(`/glossary/requests/${id}/approve`, { method: 'POST', ...json({ items }) }),
   },
@@ -156,6 +166,15 @@ export const api = {
   // 검수 그리드의 행 하나를 GPT로 번역해 그 행의 최신 한국어(Fix)로 쌓는다. 같은 원문 행에는 퍼지지 않는다(사람이 저장할 때 퍼진다).
   // 행 하나를 DeepL로 번역한다. 원문 언어는 서버가 그 파일에서 마지막으로 고른 값을 쓴다.
   translateRow: (segmentId: number) => request<WorkspaceRow>(`/segments/${segmentId}/translate`, { method: 'POST', ...json({}) }),
+  // 고른 여러 행(최대 50행, 한 게임)을 DeepL 또는 GPT로 다시 번역한다. 앞 묶음 응답의 activityIds를 넘기면 같은 변경 내역에 이어 단다.
+  translateBatch: (body: { segmentIds: number[]; engine: TranslateEngine; activityIds?: Record<string, number> }) =>
+    request<BatchTranslateResult>('/segments/translate-batch', { method: 'POST', ...json(body) }),
+  // 고른 행(최대 50행, 한 게임)의 Fix를 GPT로 다듬은 안만 받는다(저장 안 함).
+  polish: (segmentIds: number[]) =>
+    request<PolishResult>('/segments/polish', { method: 'POST', ...json({ segmentIds }) }),
+  // 고른 다듬기 안을 사람이 저장한 것처럼 넣는다(최대 500행, 한 게임). 같은 원문 행에도 따라 들어간다.
+  saveBatch: (items: SaveBatchItem[]) =>
+    request<SaveBatchResult>('/segments/save-batch', { method: 'POST', ...json({ items }) }),
   // 행의 지금 한국어를 GPT로 줄인 후보만 받는다(저장 안 함). maxChars가 없으면 서버가 원문 글자 수 × ratio로 정한다.
   shortenRow: (segmentId: number, opts: { maxChars?: number; ratio?: number } = {}) =>
     request<RowShortenResult>(`/segments/${segmentId}/shorten`, { method: 'POST', ...json(opts) }),
@@ -239,6 +258,18 @@ export const api = {
     }
     return { blob: await res.blob(), name: dispositionName(res.headers.get('Content-Disposition')) }
   },
+  rules: {
+    list: (gameId: number) => request<RuleList>(`/games/${gameId}/rules`),
+    relearn: (gameId: number) => request<RuleList>(`/games/${gameId}/rules/relearn`, { method: 'POST' }),
+    judgeKinds: (gameId: number) => request<JobDto>(`/games/${gameId}/rules/judge-kinds`, { method: 'POST' }),
+    job: (jobId: number) => request<JobDto>(`/jobs/${jobId}`),
+    setIgnored: (ruleId: number, ignored: boolean) => request<CorrectionRule>(`/rules/${ruleId}/${ignored ? 'ignore' : 'unignore'}`, { method: 'POST' }),
+    setPolicy: (gameId: number, textKind: string, policy: 'CONVERT' | 'KEEP') =>
+      request<RuleList>(`/games/${gameId}/style-policy/${textKind}`, { method: 'PUT', ...json({ policy }) }),
+    preview: (ruleId: number) => request<RulePreview>(`/rules/${ruleId}/preview`),
+    rewrite: (ruleId: number, segmentIds: number[]) => request<RulePreviewRow[]>(`/rules/${ruleId}/rewrite`, { method: 'POST', ...json({ segmentIds }) }),
+    apply: (ruleId: number, body: RuleApplyRequest) => request<RuleApplyResult>(`/rules/${ruleId}/apply`, { method: 'POST', ...json(body) }),
+  },
   activity: {
     // 최신순 커서 페이지. before는 그보다 작은 id만.
     feed: (projectId: number, before?: number, size?: number) =>
@@ -250,6 +281,9 @@ export const api = {
       request<ActivityRowsResponse>(`/activity/${activityId}/rows${qs({ page, size })}`),
     // 그 항목이 건드린 행만 이전 본문으로 되돌린다(전파 없음). 되돌리기도 REVERT 항목으로 남는다.
     revert: (activityId: number) => request<ActivityRevertResult>(`/activity/${activityId}/revert`, { method: 'POST' }),
+    // Ctrl+Z·Ctrl+Y: 준 변경 내역들을 최신 것부터 되돌린다. 돌아온 activityIds를 다시 넘기면 다시 실행이 된다.
+    undo: (activityIds: number[]) =>
+      request<{ reverted: number; skipped: number; activityIds: number[] }>('/activity/undo', { method: 'POST', ...json({ activityIds }) }),
   },
   glossary: {
     list: (gameId: number, scope: 'GAME' | 'SHARED' | 'ALL') =>

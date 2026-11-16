@@ -14,12 +14,14 @@ interface StatusBarProps {
   editors?: ReviewerRef[]
   /** 최종 리뷰 시트면 최종 수정 표시 수를 확정 뒤에 보인다. */
   finalReview?: boolean
+  /** 되돌리기·복사 같은 짧은 안내(오류 아님). 지우는 건 부르는 쪽이 한다. */
+  info?: string | null
 }
 
 const PROPAGATED_NOTICE_MS = 4000
 
 /** 하단 상태바. 수치는 summary 기준(실시간 아님 — 저장·체크 뒤 재조회). 검토자별 막대는 담당 행 중 2차 체크 비율. */
-export function StatusBar({ summary, sheet, selection, saveState, error, propagated, propagatedSeq, onDismissError, editors = [], finalReview = false }: StatusBarProps) {
+export function StatusBar({ summary, sheet, selection, saveState, error, propagated, propagatedSeq, onDismissError, editors = [], finalReview = false, info }: StatusBarProps) {
   const n = (v: number) => v.toLocaleString()
   // 지금 보여줄 건수(없으면 null) — 이 값 하나가 "보이는지"와 "몇 행인지"를 함께 결정한다(propagated를
   // 별도 불리언과 함께 다시 확인하지 않는다 — 그러면 이번 저장이 0행이라 알림을 내려야 하는데 렌더 쪽
@@ -42,7 +44,7 @@ export function StatusBar({ summary, sheet, selection, saveState, error, propaga
         </div>
       )}
       <div className="flex items-center gap-4 px-3 py-1">
-        {summary && <span>{n(summary.total)}행 · 수정됨 {n(summary.changed)} · A {n(summary.review1)} · B {n(summary.review2)} · 확인 필요 {n(summary.needsCheck)} · 확정 {n(summary.confirmed)}{finalReview ? ` · 최종 수정 ${n(summary.finalMark ?? 0)}` : ''}</span>}
+        {summary && <span>{n(summary.total)}행 · 수정됨 {n(summary.changed)} · A {n(summary.review1)} · B {n(summary.review2)} · C {n(summary.review3)} · 확인 필요 {n(summary.needsCheck)} · 확정 {n(summary.confirmed)}{finalReview ? ` · 최종 수정 ${n(summary.finalMark ?? 0)}` : ''}</span>}
         {summary?.reviewers.map((p) => (
           <span key={p.reviewer.id} className="inline-flex items-center gap-1">
             <span className="inline-block h-2 w-2 rounded-full" style={{ background: p.reviewer.color }} />
@@ -53,6 +55,7 @@ export function StatusBar({ summary, sheet, selection, saveState, error, propaga
         ))}
         {summary && <span>미배정 {n(summary.unassigned)}</span>}
         {notice !== null && <span className="text-purple">같은 원문 {n(notice)}행도 함께 수정됨</span>}
+        {info && <span role="status" className="text-purple">{info}</span>}
         {sheet && <span className="text-muted">({sheet})</span>}
         <span className="flex-1" />
         {editors.length > 0 && (

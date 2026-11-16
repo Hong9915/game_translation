@@ -7,11 +7,15 @@ import { WorkspaceGrid } from './WorkspaceGrid'
 
 const row = (i: number, over: Partial<WorkspaceRow> = {}): WorkspaceRow => ({
   id: 100 + i, rowNo: i + 2, pairIndex: 0, indexLabel: `UI!${i + 2}`, keyText: `UI_${i}`, src: '混沌圣物', en: 'Chaos Relic', existingKo: '혼돈의 성물', fix: '혼돈의 성물',
-  changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, finalReview: false, finalMark: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0, ...over,
+  changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, review3: false, needsCheck: false, confirmed: false, finalReview: false, finalMark: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0, ...over,
 })
 const noop = () => {}
 function renderGrid(rows: (WorkspaceRow | undefined)[], over: Partial<ComponentProps<typeof WorkspaceGrid>> = {}) {
-  const props = { rows, ratio: 1, busy: new Set<number>(), highlighted: new Set<number>(), failedText: new Map<number, { text: string; base: string }>(), onSave: vi.fn(), onMarks: vi.fn(), onBulkMarks: vi.fn(), viewCount: rows.length, onVisibleRange: vi.fn(), onFilterDuplicates: vi.fn(), onAddToGlossary: vi.fn(), onTranslate: vi.fn(), onShorten: vi.fn(), onJosaApply: vi.fn(), onJosaIgnore: vi.fn(), onHistory: vi.fn(() => Promise.resolve([])), translating: new Set<number>(), ...over }
+  const onSave = vi.fn()
+  const props = { rows, ratio: 1, busy: new Set<number>(), highlighted: new Set<number>(), failedText: new Map<number, { text: string; base: string }>(), onSave, onMarks: vi.fn(), onBulkMarks: vi.fn(), viewCount: rows.length, onVisibleRange: vi.fn(), onFilterDuplicates: vi.fn(), onAddToGlossary: vi.fn(), onTranslate: vi.fn(), onShorten: vi.fn(), onJosaApply: vi.fn(), onJosaIgnore: vi.fn(), onHistory: vi.fn(() => Promise.resolve([])), translating: new Set<number>(),
+    // 붙여넣기는 onSaveMany 한 번으로 간다 — 기본값은 부모처럼 행마다 onSave를 부른다(기존 테스트가 onSave를 본다)
+    onSaveMany: vi.fn((items: { row: WorkspaceRow; text: string }[]) => items.forEach((it) => onSave(it.row, it.text))),
+    onUndo: vi.fn(), onRedo: vi.fn(), onCopyAllFix: vi.fn(), onRangeAction: vi.fn(), onNotice: vi.fn(), ...over }
   const utils = render(<WorkspaceGrid {...props} />)
   return { ...utils, props }
 }
@@ -51,7 +55,7 @@ describe('WorkspaceGrid', () => {
     const gridRows = screen.getAllByRole('row')
     const placeholderCells = within(gridRows[gridRows.length - 1]).getAllByRole('gridcell')
     expect(placeholderCells[1].className).toContain('sticky')
-    expect(placeholderCells[1].className).toContain('left-12')
+    expect(placeholderCells[1].className).toContain('left-16')
   })
 
   it('reports the visible range on mount', () => {
@@ -97,7 +101,7 @@ describe('WorkspaceGrid', () => {
   it('has 1차·2차·확인 필요·확정·비고 columns instead of 완료·담당', () => {
     renderGrid([row(0)])
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent)
-    expect(headers).toEqual(['#', 'ID', '간체 원문', '영어', '기존 한국어', '수정 한국어 (Fix)', 'A', 'B', '확인 필요', '확정', '비고'])
+    expect(headers).toEqual(['#', 'ID', '간체 원문', '영어', '기존 한국어', '수정 한국어 (Fix)', 'A', 'B', 'C', '확인 필요', '확정', '비고'])
   })
 
   it('toggles each mark by clicking its cell', async () => {
@@ -107,6 +111,8 @@ describe('WorkspaceGrid', () => {
     expect(props.onMarks).toHaveBeenLastCalledWith(expect.objectContaining({ id: 100 }), { review1: false })
     await userEvent.click(screen.getByRole('checkbox', { name: '2행 B' }))
     expect(props.onMarks).toHaveBeenLastCalledWith(expect.objectContaining({ id: 100 }), { review2: false })
+    await userEvent.click(screen.getByRole('gridcell', { name: '2행 C' }))
+    expect(props.onMarks).toHaveBeenLastCalledWith(expect.objectContaining({ id: 100 }), { review3: true })
     await userEvent.click(screen.getByRole('gridcell', { name: '2행 확인 필요' }))
     expect(props.onMarks).toHaveBeenLastCalledWith(expect.objectContaining({ id: 100 }), { needsCheck: true })
     await userEvent.click(screen.getByRole('gridcell', { name: '2행 확정' }))
@@ -226,7 +232,7 @@ describe('WorkspaceGrid', () => {
   it('shows saving state instead of the text while busy, and a length flag otherwise', () => {
     const { rerender } = renderGrid([row(0, { fix: '혼돈의 성물이라는 아주 긴 번역문' })], { busy: new Set([100]) })
     expect(screen.getByRole('gridcell', { name: '2행 Fix' })).toHaveTextContent('저장 중…')
-    rerender(<WorkspaceGrid rows={[row(0, { fix: '혼돈의 성물이라는 아주 긴 번역문' })]} ratio={1} busy={new Set()} highlighted={new Set()} failedText={new Map()} onSave={noop} onMarks={noop} onBulkMarks={noop} viewCount={1} onVisibleRange={noop} onFilterDuplicates={noop} onAddToGlossary={noop} onTranslate={noop} onShorten={vi.fn()} onJosaApply={noop} onJosaIgnore={noop} onHistory={vi.fn()} translating={new Set()} />)
+    rerender(<WorkspaceGrid rows={[row(0, { fix: '혼돈의 성물이라는 아주 긴 번역문' })]} ratio={1} busy={new Set()} highlighted={new Set()} failedText={new Map()} onSave={noop} onMarks={noop} onBulkMarks={noop} viewCount={1} onVisibleRange={noop} onFilterDuplicates={noop} onAddToGlossary={noop} onTranslate={noop} onShorten={vi.fn()} onJosaApply={noop} onJosaIgnore={noop} onHistory={vi.fn()} translating={new Set()} onSaveMany={noop} onUndo={noop} onRedo={noop} onCopyAllFix={noop} onRangeAction={noop} onNotice={noop} />)
     expect(screen.getByText('길이')).toBeInTheDocument()
   })
 
@@ -656,5 +662,308 @@ describe('WorkspaceGrid', () => {
     renderGrid([row(0, { changed: true })])
     expect(screen.queryByRole('columnheader', { name: '최종 수정' })).toBeNull()
     expect(screen.getByRole('gridcell', { name: '2행 Fix' }).className).toMatch(/fff7d6/)
+  })
+
+  describe('Fix·원문 범위', () => {
+    const stubClipboard = () => {
+      const writeText = vi.fn(() => Promise.resolve())
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      return writeText
+    }
+    const fixCell = (n: number) => screen.getByRole('gridcell', { name: `${n}행 Fix` })
+    const isRanged = (el: HTMLElement) => el.className.includes('e6f4ea')
+
+    it('selects a fix range by dragging across rows', () => {
+      renderGrid([row(0), row(1), row(2), row(3)])
+      fireEvent.mouseDown(fixCell(2), { button: 0, buttons: 1 })
+      fireEvent.mouseEnter(fixCell(3), { buttons: 1 })
+      fireEvent.mouseEnter(fixCell(4), { buttons: 1 })
+      expect([2, 3, 4].map((n) => isRanged(fixCell(n)))).toEqual([true, true, true])
+      expect(isRanged(fixCell(5))).toBe(false)
+      expect(screen.getByRole('region', { name: '선택한 칸 내용' })).toHaveTextContent('4행 · 수정 한국어 (Fix)')
+    })
+
+    it('draws a green outline around the whole range', () => {
+      renderGrid([row(0), row(1), row(2), row(3)])
+      fireEvent.mouseDown(fixCell(2), { button: 0, buttons: 1 })
+      fireEvent.mouseEnter(fixCell(4), { buttons: 1 })
+      const edge = (n: number) => fixCell(n).dataset.rangeEdge
+      // 엑셀처럼 범위 바깥 둘레만: 맨 위 행은 위·양옆, 가운데는 양옆, 맨 아래 행은 아래·양옆
+      expect([2, 3, 4, 5].map(edge)).toEqual(['top', 'mid', 'bottom', undefined])
+      expect(fixCell(2).style.boxShadow).toContain('#107c41')
+      expect(fixCell(5).style.boxShadow).toBe('')
+    })
+
+    it('outlines a one-row range on all four sides', () => {
+      renderGrid([row(0), row(1), row(2)])
+      fireEvent.mouseDown(fixCell(3), { button: 0 })
+      fireEvent.mouseDown(fixCell(3), { button: 0, shiftKey: true })
+      fireEvent.keyDown(screen.getByRole('grid'), { key: 'ArrowDown', shiftKey: true })
+      fireEvent.keyDown(screen.getByRole('grid'), { key: 'ArrowUp', shiftKey: true })
+      expect(fixCell(3).dataset.rangeEdge).toBe('single')
+    })
+
+    it('keeps in-cell text drag as text selection', () => {
+      renderGrid([row(0), row(1)])
+      fireEvent.mouseDown(fixCell(2), { button: 0, buttons: 1 })
+      fireEvent.mouseEnter(fixCell(2), { buttons: 1 })
+      expect(isRanged(fixCell(2))).toBe(false)
+      // 버튼을 놓고 지나가기만 하면 범위가 아니다
+      fireEvent.mouseEnter(fixCell(3), { buttons: 0 })
+      expect(isRanged(fixCell(3))).toBe(false)
+      expect(fixCell(2).className).toContain('select-text')
+    })
+
+    it('extends range with shift+click and shift+arrow', () => {
+      renderGrid([row(0), row(1), row(2), row(3)])
+      const grid = screen.getByRole('grid')
+      fireEvent.mouseDown(fixCell(2), { button: 0 })
+      fireEvent.mouseDown(fixCell(3), { button: 0, shiftKey: true })
+      expect([2, 3, 4].map((n) => isRanged(fixCell(n)))).toEqual([true, true, false])
+      fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true })
+      expect([2, 3, 4, 5].map((n) => isRanged(fixCell(n)))).toEqual([true, true, true, false])
+      fireEvent.keyDown(grid, { key: 'ArrowUp', shiftKey: true })
+      expect([2, 3, 4].map((n) => isRanged(fixCell(n)))).toEqual([true, true, false])
+      // Shift 없는 방향키는 범위를 없앤다
+      fireEvent.keyDown(grid, { key: 'ArrowDown' })
+      expect([2, 3, 4].map((n) => isRanged(fixCell(n)))).toEqual([false, false, false])
+      // 범위 없이 Shift+↓면 지금 행에서 시작한다
+      fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true })
+      expect([4, 5].map((n) => isRanged(fixCell(n)))).toEqual([true, true])
+      // 일반 클릭도 범위를 없앤다
+      fireEvent.mouseDown(fixCell(2), { button: 0 })
+      expect([4, 5].map((n) => isRanged(fixCell(n)))).toEqual([false, false])
+    })
+
+    it('copies range as one column', () => {
+      const writeText = stubClipboard()
+      renderGrid([row(0, { src: '甲' }), row(1, { src: '乙\n丙' }), row(2, { src: '丁' })])
+      window.getSelection()!.removeAllRanges()
+      const grid = screen.getByRole('grid')
+      fireEvent.mouseDown(screen.getByText('甲'), { button: 0 })
+      fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true })
+      fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true })
+      fireEvent.keyDown(grid, { key: 'c', code: 'KeyC', ctrlKey: true })
+      expect(writeText).toHaveBeenCalledWith('甲\n"乙\n丙"\n丁')
+    })
+
+    it('does not copy a range with unloaded rows', () => {
+      const writeText = stubClipboard()
+      const { props } = renderGrid([row(0), undefined, row(2)])
+      const grid = screen.getByRole('grid')
+      fireEvent.mouseDown(fixCell(2), { button: 0 })
+      fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true })
+      fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true })
+      fireEvent.keyDown(grid, { key: 'c', code: 'KeyC', ctrlKey: true })
+      expect(writeText).not.toHaveBeenCalled()
+      expect(props.onNotice).toHaveBeenCalledWith('아직 안 들어온 행이 있어 복사하지 않았습니다')
+    })
+
+    it('undo and redo shortcuts', () => {
+      const { props } = renderGrid([row(0)])
+      const grid = screen.getByRole('grid')
+      fireEvent.keyDown(grid, { key: 'ㅋ', code: 'KeyZ', ctrlKey: true })
+      expect(props.onUndo).toHaveBeenCalledTimes(1)
+      fireEvent.keyDown(grid, { key: 'ㅛ', code: 'KeyY', metaKey: true })
+      expect(props.onRedo).toHaveBeenCalledTimes(1)
+      fireEvent.keyDown(grid, { key: 'Z', code: 'KeyZ', ctrlKey: true, shiftKey: true })
+      expect(props.onRedo).toHaveBeenCalledTimes(2)
+      expect(props.onUndo).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not undo on server while editing', () => {
+      const { props } = renderGrid([row(0)])
+      fireEvent.doubleClick(fixCell(2))
+      const box = screen.getByRole('textbox', { name: '2행 Fix' })
+      fireEvent.keyDown(box, { key: 'z', code: 'KeyZ', ctrlKey: true })
+      fireEvent.keyDown(box, { key: 'y', code: 'KeyY', ctrlKey: true })
+      expect(props.onUndo).not.toHaveBeenCalled()
+      expect(props.onRedo).not.toHaveBeenCalled()
+    })
+
+    it('drags a range on 기존 한국어 and copies it as one column', () => {
+      const writeText = stubClipboard()
+      renderGrid([row(0, { existingKo: '소탕' }), row(1, { existingKo: null }), row(2, { existingKo: '보스\n소탕' }), row(3, { existingKo: '취소' })])
+      const ko = (t: string) => screen.getAllByText(t).find((el) => el.tagName === 'SPAN')!.closest('td')!
+      fireEvent.mouseDown(ko('소탕'), { button: 0, buttons: 1 })
+      fireEvent.mouseEnter(ko('취소'), { buttons: 1 })
+      expect(isRanged(ko('소탕'))).toBe(true)
+      expect(ko('소탕').dataset.rangeEdge).toBe('top')
+      expect(ko('취소').dataset.rangeEdge).toBe('bottom')
+      expect(isRanged(fixCell(2))).toBe(false)
+      fireEvent.keyDown(screen.getByRole('grid'), { key: 'c', code: 'KeyC', ctrlKey: true })
+      expect(writeText).toHaveBeenCalledWith('소탕\n\n"보스\n소탕"\n취소')
+    })
+
+    it('right-click in a 기존 한국어 range offers only copy', async () => {
+      const writeText = stubClipboard()
+      renderGrid([row(0, { existingKo: '소탕' }), row(1, { existingKo: '취소' })])
+      const ko = (t: string) => screen.getAllByText(t).find((el) => el.tagName === 'SPAN')!.closest('td')!
+      fireEvent.mouseDown(ko('소탕'), { button: 0 })
+      fireEvent.mouseDown(ko('취소'), { button: 0, shiftKey: true })
+      expect(isRanged(ko('소탕'))).toBe(true)
+      fireEvent.contextMenu(ko('소탕'))
+      expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['복사 (2행)'])
+      await userEvent.click(screen.getByRole('menuitem', { name: '복사 (2행)' }))
+      expect(writeText).toHaveBeenCalledWith('소탕\n취소')
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    })
+
+    it('range menu puts copy first, also over 500 rows', async () => {
+      const writeText = stubClipboard()
+      const rows = Array.from({ length: 600 }, (_, i) => row(i))
+      renderGrid(rows, { restore: { cell: { row: 500, col: 'fix' }, scrollTop: 0 } })
+      fireEvent.mouseDown(fixCell(2), { button: 0, shiftKey: true })
+      fireEvent.contextMenu(fixCell(3))
+      const items = screen.getAllByRole('menuitem')
+      expect(items[0]).toHaveTextContent('복사 (501행)')
+      expect(items[0]).toBeEnabled()
+      expect(screen.getByRole('menuitem', { name: 'GPT로 다듬기 (501행)' })).toBeDisabled()
+      await userEvent.click(items[0])
+      expect(writeText).toHaveBeenCalledWith(rows.slice(0, 501).map((r) => r.fix).join('\n'))
+    })
+
+    it('range copy item is disabled while rows are not loaded', () => {
+      renderGrid([row(0), undefined, row(2)])
+      fireEvent.mouseDown(fixCell(2), { button: 0 })
+      fireEvent.mouseDown(fixCell(4), { button: 0, shiftKey: true })
+      fireEvent.contextMenu(fixCell(2))
+      expect(screen.getByRole('menuitem', { name: '복사 (3행)' })).toBeDisabled()
+    })
+
+    it('single-cell menu has 복사 for the whole value', async () => {
+      const writeText = stubClipboard()
+      renderGrid([row(0, { fix: '보스 소탕' }), row(1)])
+      fireEvent.contextMenu(fixCell(2))
+      expect(screen.getAllByRole('menuitem')[0]).toHaveTextContent('복사')
+      await userEvent.click(screen.getByRole('menuitem', { name: '복사' }))
+      expect(writeText).toHaveBeenCalledWith('보스 소탕')
+    })
+
+    it('range menu on src offers DeepL and GPT', async () => {
+      const rows = [row(0, { src: '甲' }), row(1, { src: '乙' }), row(2, { src: '丙' })]
+      const { props } = renderGrid(rows)
+      fireEvent.mouseDown(screen.getByText('甲'), { button: 0 })
+      fireEvent.mouseDown(screen.getByText('乙'), { button: 0, shiftKey: true })
+      fireEvent.contextMenu(screen.getByText('甲'))
+      expect(screen.queryByRole('menuitem', { name: /단어장에 추가/ })).not.toBeInTheDocument()
+      expect(screen.getByRole('menuitem', { name: 'GPT 번역 (2행)' })).toBeEnabled()
+      await userEvent.click(screen.getByRole('menuitem', { name: 'DeepL 번역 (2행)' }))
+      expect(props.onRangeAction).toHaveBeenCalledWith('deepl', [rows[0], rows[1]])
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+      fireEvent.contextMenu(screen.getAllByText('乙').find((el) => el.tagName === 'SPAN')!)   // 위 입력줄에도 같은 글이 있다
+      await userEvent.click(screen.getByRole('menuitem', { name: 'GPT 번역 (2행)' }))
+      expect(props.onRangeAction).toHaveBeenLastCalledWith('gpt', [rows[0], rows[1]])
+    })
+
+    it('range menu on fix offers polish', async () => {
+      const rows = [row(0), row(1), row(2)]
+      const { props } = renderGrid(rows)
+      fireEvent.mouseDown(fixCell(3), { button: 0 })
+      fireEvent.mouseDown(fixCell(4), { button: 0, shiftKey: true })
+      fireEvent.contextMenu(fixCell(4))
+      expect(screen.queryByRole('menuitem', { name: /DeepL/ })).not.toBeInTheDocument()
+      await userEvent.click(screen.getByRole('menuitem', { name: 'GPT로 다듬기 (2행)' }))
+      expect(props.onRangeAction).toHaveBeenCalledWith('polish', [rows[1], rows[2]])
+    })
+
+    it('range over 500 disables items', () => {
+      const rows = Array.from({ length: 600 }, (_, i) => row(i))
+      renderGrid(rows, { restore: { cell: { row: 500, col: 'fix' }, scrollTop: 0 } })
+      fireEvent.mouseDown(fixCell(2), { button: 0, shiftKey: true })
+      fireEvent.contextMenu(fixCell(3))
+      const item = screen.getByRole('menuitem', { name: 'GPT로 다듬기 (501행)' })
+      expect(item).toBeDisabled()
+      expect(item).toHaveAttribute('title', '한 번에 500행까지 됩니다')
+    })
+
+    it('range with unloaded rows disables items', () => {
+      renderGrid([row(0), undefined, row(2)])
+      const grid = screen.getByRole('grid')
+      fireEvent.mouseDown(fixCell(2), { button: 0 })
+      fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true })
+      fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true })
+      fireEvent.contextMenu(fixCell(4))
+      const item = screen.getByRole('menuitem', { name: 'GPT로 다듬기 (3행)' })
+      expect(item).toBeDisabled()
+      expect(item).toHaveAttribute('title', '스크롤해 행을 불러온 뒤 다시 하세요')
+    })
+
+    it('single-cell context menu unchanged without range', () => {
+      renderGrid([row(0), row(1)])
+      fireEvent.mouseDown(fixCell(2), { button: 0 })
+      fireEvent.contextMenu(fixCell(2))
+      expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['복사', '단어장에 추가 (한국어)', '짧게 줄이기', '변경 내역 보기'])
+    })
+
+    it('right-click outside the range keeps the single-cell menu', () => {
+      renderGrid([row(0), row(1), row(2)])
+      fireEvent.mouseDown(fixCell(2), { button: 0 })
+      fireEvent.mouseDown(fixCell(3), { button: 0, shiftKey: true })
+      fireEvent.contextMenu(fixCell(4))
+      expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['복사', '단어장에 추가 (한국어)', '짧게 줄이기', '변경 내역 보기'])
+    })
+
+    it('paste calls onSaveMany once', () => {
+      const onSaveMany = vi.fn()
+      const { props } = renderGrid([row(0), row(1), row(2), row(3)], { onSaveMany })
+      const grid = screen.getByRole('grid')
+      fireEvent.mouseDown(fixCell(2), { button: 0 })
+      fireEvent.paste(grid, { clipboardData: { getData: () => '가\n\n혼돈의 성물\n나' } })
+      expect(onSaveMany).toHaveBeenCalledTimes(1)
+      expect(onSaveMany).toHaveBeenCalledWith([
+        { row: expect.objectContaining({ id: 100 }), text: '가' },
+        { row: expect.objectContaining({ id: 103 }), text: '나' },
+      ])
+      expect(props.onSave).not.toHaveBeenCalled()
+    })
+
+    it('clears the range when the row list changes under it', () => {
+      const writeText = stubClipboard()
+      const rows = [row(0, { fix: '가' }), row(1, { fix: '나' }), row(2, { fix: '다' })]
+      const { props, rerender } = renderGrid(rows)
+      const grid = screen.getByRole('grid')
+      window.getSelection()!.removeAllRanges()
+      fireEvent.mouseDown(fixCell(2), { button: 0 })
+      fireEvent.mouseDown(fixCell(3), { button: 0, shiftKey: true })
+      expect(isRanged(fixCell(2))).toBe(true)
+      // 필터가 바뀌어 첫 행이 빠지고 순서가 바뀌었다 — 같은 줄 번호에 다른 행이 온다
+      rerender(<WorkspaceGrid {...props} rows={[rows[2], rows[1]]} />)
+      expect(isRanged(fixCell(4))).toBe(false)
+      expect(isRanged(fixCell(3))).toBe(false)
+      fireEvent.keyDown(grid, { key: 'c', code: 'KeyC', ctrlKey: true })
+      expect(writeText).toHaveBeenCalledWith('나')   // 범위 대신 고른 칸 하나(2번째 줄)
+    })
+
+    it('keeps the range when rows reload with the same ids', () => {
+      const rows = [row(0), row(1), row(2)]
+      const { props, rerender } = renderGrid(rows)
+      fireEvent.mouseDown(fixCell(2), { button: 0 })
+      fireEvent.mouseDown(fixCell(3), { button: 0, shiftKey: true })
+      rerender(<WorkspaceGrid {...props} rows={rows.map((r) => ({ ...r }))} />)
+      expect([2, 3, 4].map((n) => isRanged(fixCell(n)))).toEqual([true, true, false])
+    })
+
+    it('pastes from the top of the range and clears it', () => {
+      const onSaveMany = vi.fn()
+      renderGrid([row(0), row(1), row(2), row(3)], { onSaveMany })
+      const grid = screen.getByRole('grid')
+      fireEvent.mouseDown(fixCell(3), { button: 0, buttons: 1 })
+      fireEvent.mouseEnter(fixCell(4), { buttons: 1 })   // 아래로 끌어 head = 4행
+      fireEvent.paste(grid, { clipboardData: { getData: () => '가\n나' } })
+      expect(onSaveMany).toHaveBeenCalledWith([
+        { row: expect.objectContaining({ id: 101 }), text: '가' },
+        { row: expect.objectContaining({ id: 102 }), text: '나' },
+      ])
+      expect(isRanged(fixCell(3))).toBe(false)
+    })
+
+    it('Fix 머리글 우클릭에 Fix 열 전체 복사가 있다', async () => {
+      const { props } = renderGrid([row(0)])
+      fireEvent.contextMenu(screen.getByRole('columnheader', { name: '수정 한국어 (Fix)' }))
+      await userEvent.click(screen.getByRole('menuitem', { name: 'Fix 열 전체 복사' }))
+      expect(props.onCopyAllFix).toHaveBeenCalledTimes(1)
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    })
   })
 })

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
 import { SheetBar } from './SheetBar'
 
-const sheets = [{ sheet: 'UI', total: 1204, changed: 38, review1: 0, review2: 412, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }, { sheet: 'Skill', total: 863, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }]
+const sheets = [{ sheet: 'UI', total: 1204, changed: 38, review1: 0, review2: 412, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }, { sheet: 'Skill', total: 863, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0 }]
 
 describe('SheetBar', () => {
   it('shows how many rows are still waiting for the josa check', () => {

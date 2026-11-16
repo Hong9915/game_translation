@@ -28,6 +28,24 @@ body {
   .fade-in { animation: fade-in 150ms ease-out both; }
 }
 
+/* 메모 편집기: Tailwind가 지운 제목·목록 모양을 되살린다 */
+/* --memo-font-size는 MemoPanel이 그 사람의 기본 크기로 넣는다. 안쪽 크기는 em이라 함께 커진다. */
+.memo-editor { min-height: 100%; padding: 12px 16px 40px; font-size: var(--memo-font-size); line-height: 1.65; outline: none; }
+.memo-editor p { margin: 0 0 6px; }
+.memo-editor h2 { margin: 14px 0 6px; font-size: 1.3em; font-weight: 600; }
+.memo-editor ul, .memo-editor ol { margin: 0 0 6px; padding-left: 20px; }
+.memo-editor ul { list-style: disc; }
+.memo-editor ol { list-style: decimal; }
+.memo-editor a { color: theme('colors.primary'); text-decoration: underline; }
+.memo-editor blockquote { margin: 0 0 6px; padding-left: 10px; border-left: 2px solid theme('colors.line'); color: theme('colors.body'); }
+.memo-editor code { padding: 1px 4px; border-radius: 4px; background: theme('colors.canvas'); font-size: 0.9em; }
+.memo-editor ul[data-type='taskList'] { list-style: none; padding-left: 0; }
+.memo-editor li[data-type='taskItem'] { display: flex; gap: 6px; }
+.memo-editor li[data-type='taskItem'] > label { flex: none; padding-top: 0.15em; }
+.memo-editor li[data-type='taskItem'] > div { flex: 1; min-width: 0; }
+.memo-editor li[data-checked='true'] > div { color: theme('colors.muted'); text-decoration: line-through; }
+.memo-editor p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; height: 0; color: theme('colors.muted'); pointer-events: none; }
+
 @keyframes pop-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 

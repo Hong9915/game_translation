@@ -5,7 +5,7 @@ import { applyMarks, patchRows, rollbackMarks, rowFromSegment, withMarksOf } fro
 const jimin = { id: 7, name: '지민', color: '#0c8599' }
 const row = (id: number, over: Partial<WorkspaceRow> = {}): WorkspaceRow => ({
   id, rowNo: id + 1, pairIndex: 0, indexLabel: `UI!${id + 1}`, keyText: `K${id}`, src: '确认', en: 'Confirm', existingKo: '확인', fix: '확인',
-  changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, finalReview: false, finalMark: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0, ...over,
+  changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, review3: false, needsCheck: false, confirmed: false, finalReview: false, finalMark: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0, ...over,
 })
 const seg = (id: number, over: Partial<SegmentRow> = {}): SegmentRow => ({
   id, indexLabel: `UI!${id + 1}`, srcText: '确认', enText: 'Confirm', currentText: '확인', lenKo: 2, lenSrc: 2, flagged: false,
@@ -75,6 +75,7 @@ describe('patchRows', () => {
 describe('applyMarks', () => {
   it('changes only the given fields — 1차 and 2차 are independent — and sets note', () => {
     expect(applyMarks(row(1), { review1: true })).toMatchObject({ review1: true, review2: false })
+    expect(applyMarks(row(1, { review1: true }), { review3: true })).toMatchObject({ review1: true, review2: false, review3: true })
     expect(applyMarks(row(1, { review1: true, review2: true }), { review1: false })).toMatchObject({ review1: false, review2: true })
     expect(applyMarks(row(1, { review1: true }), { review2: true })).toMatchObject({ review1: true, review2: true })
     expect(applyMarks(row(1), { needsCheck: true, note: '메모' })).toMatchObject({ review1: false, needsCheck: true, note: '메모' })

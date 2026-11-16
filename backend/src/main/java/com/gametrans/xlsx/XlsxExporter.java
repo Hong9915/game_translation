@@ -310,8 +310,14 @@ public class XlsxExporter {
         return row == null ? sheet.createRow(idx) : row;
     }
 
+    /**
+     * 글을 쓸 칸. 글자를 칸 안에 직접 적은 칸(t="inlineStr" — openpyxl write_only·SXSSF가 만든 파일)은 비워서 돌려준다.
+     * POI는 그런 칸에 setCellValue하면 &lt;v&gt;만 바꾸고 옛 글(&lt;is&gt;)을 남겨, 엑셀이 옛 글을 그대로 보여 준다. 스타일은 남는다.
+     */
     private static Cell cellAt(Row row, int idx) {
         Cell cell = row.getCell(idx);
-        return cell == null ? row.createCell(idx) : cell;
+        if (cell == null) return row.createCell(idx);
+        if (cell instanceof org.apache.poi.xssf.usermodel.XSSFCell x && x.getCTCell().isSetIs()) cell.setBlank();
+        return cell;
     }
 }

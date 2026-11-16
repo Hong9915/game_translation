@@ -20,9 +20,9 @@ export interface ActivityPanelProps {
 interface Ctx { projectId?: number; game?: ActivityGameScope; key: number | string; onJump: ActivityPanelProps['onJump'] }
 
 const ROWS_PAGE = 20
-const JOB_KINDS = new Set(['FIX_TERMS', 'SHORTEN', 'GLOSSARY_APPLY', 'REVERT', 'JOSA_FIX', 'TAG_SPACING', 'COMMAND_FIX'])
+const JOB_KINDS = new Set(['FIX_TERMS', 'SHORTEN', 'GLOSSARY_APPLY', 'REVERT', 'JOSA_FIX', 'TAG_SPACING', 'COMMAND_FIX', 'POLISH', 'RULE_APPLY'])
 /** 되돌릴 수 있는 종류. 단어장 편집은 항목 자체를 단어장에서 고친다. */
-const REVERTIBLE = new Set(['EDIT', 'RETRANSLATE', 'FIX_TERMS', 'SHORTEN', 'GLOSSARY_APPLY', 'REVERT', 'JOSA_FIX', 'TAG_SPACING', 'COMMAND_FIX'])
+const REVERTIBLE = new Set(['EDIT', 'RETRANSLATE', 'FIX_TERMS', 'SHORTEN', 'GLOSSARY_APPLY', 'REVERT', 'JOSA_FIX', 'TAG_SPACING', 'COMMAND_FIX', 'POLISH', 'RULE_APPLY'])
 const GLOSSARY_APPLY_NOTE = '단어장 항목은 그대로 남아 다음 일괄 적용 때 다시 바뀝니다. 항목을 고치거나 지우려면 단어장에서 하세요.'
 
 /** 검수 워크스페이스 오른쪽 변경 내역 패널(설계 2026-09-30 §4). 단어장 패널과 같은 자리·같은 폭. */
@@ -63,7 +63,10 @@ export default function ActivityPanel({ projectId, game, onClose, onJump }: Acti
 
 function Item({ item, ctx }: { item: ActivityFeedItem; ctx: Ctx }) {
   const [open, setOpen] = useState(false)
-  const isEdit = item.kind === 'EDIT' || item.kind === 'RETRANSLATE'
+  // 여러 행 다시 번역은 대표 행(detail.segmentId)이 없다 — 작업류처럼 행 수를 보이고 펼친다.
+  const batchRetranslate = item.kind === 'RETRANSLATE' && item.detail.segmentId == null
+  const isEdit = item.kind === 'EDIT' || (item.kind === 'RETRANSLATE' && !batchRetranslate)
+  const isJob = JOB_KINDS.has(item.kind) || batchRetranslate
   // EDIT의 "함께 바뀐 행"은 대표 행을 뺀 수. 대표 행이 없으면(같은 값 저장) 전부가 따라 바뀐 행이다.
   const others = isEdit ? item.rowCount - (item.primary ? 1 : 0) : item.rowCount
   return (
@@ -94,7 +97,7 @@ function Item({ item, ctx }: { item: ActivityFeedItem; ctx: Ctx }) {
           )}
         </div>
       )}
-      {JOB_KINDS.has(item.kind) && (
+      {isJob && (
         item.rowCount === 0
           ? <p className="mt-1 text-[13px] text-muted">바뀐 행 없음</p>
           : <button type="button" onClick={() => setOpen((v) => !v)} className="press mt-1 text-[13px] text-ink hover:underline">

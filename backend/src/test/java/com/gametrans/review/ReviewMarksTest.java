@@ -61,6 +61,24 @@ class ReviewMarksTest extends IntegrationTest {
     }
 
     @Test
+    void review3IsIndependentAndCountedAndFiltered() throws Exception {
+        Long sid = setUp(false);
+        marks(sid, "{\"review3\":true}").andExpect(status().isOk())
+                .andExpect(jsonPath("$.review3").value(true))
+                .andExpect(jsonPath("$.review1").value(false)).andExpect(jsonPath("$.review2").value(false));
+        // A·B를 바꿔도 C는 그대로
+        marks(sid, "{\"review1\":true,\"review2\":true}").andExpect(jsonPath("$.review3").value(true));
+        mvc.perform(get("/api/review/{id}/rows/summary", pid).param("sheet", "Skill"))
+                .andExpect(jsonPath("$.review3").value(1));
+        String left = mvc.perform(get("/api/review/{id}/rows", pid).param("sheet", "Skill").param("filter", "NOT_REVIEW3"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        List<Number> ids = com.jayway.jsonpath.JsonPath.read(left, "$.rows[*].id");
+        assertThat(ids.stream().map(Number::longValue)).doesNotContain(sid);
+        // 끄면 다시 안 함 쪽으로
+        marks(sid, "{\"review3\":false}").andExpect(jsonPath("$.review3").value(false)).andExpect(jsonPath("$.review1").value(true));
+    }
+
+    @Test
     void needsCheckAndNoteAreIndependent() throws Exception {
         Long sid = setUp(false);
         marks(sid, "{\"needsCheck\":true,\"note\":\"  길이 확인  \"}")

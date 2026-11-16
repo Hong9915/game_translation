@@ -34,6 +34,9 @@ export function TopBar({ fileName, gameName, gameId, projectId, reviewer, presen
           <span className="inline-block h-2 w-2 rounded-full" style={{ background: reviewer.color }} />{reviewer.name}
         </button>
       )}
+      {/* 게임마다 창 이름이 같아서 다시 눌러도 창이 늘지 않고 열려 있던 창으로 간다. gameId 0은 아직 불러오는 중. */}
+      <Button disabled={gameId === 0} title="새 창으로 메모 열기" onClick={() => window.open(`/games/${gameId}/memo`, `memo-${gameId}`, 'popup,width=720,height=820')?.focus()}>메모</Button>
+      <Button disabled={gameId === 0} title="손 수정에서 배운 교정 규칙을 새 탭에서 보기" onClick={() => window.open(`/games/${gameId}/rules`, `rules-${gameId}`)?.focus()}>교정 규칙</Button>
       <Button variant={glossaryOpen ? 'purple' : 'secondary'} onClick={onToggleGlossary}>단어장</Button>
       <Button variant={activityOpen ? 'purple' : 'secondary'} onClick={onToggleActivity}>변경 내역</Button>
       <Button variant="primary" onClick={onExport} disabled={exporting || exportDisabled} title={exportTitle}>{exporting ? '만드는 중…' : exportLabel}</Button>

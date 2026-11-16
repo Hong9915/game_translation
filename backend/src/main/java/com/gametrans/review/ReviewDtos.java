@@ -30,8 +30,8 @@ public final class ReviewDtos {
     /** 시트 탭용 집계 — 필터와 무관하게 프로젝트 전체 행 기준, 시트 이름순(세그먼트 정렬과 같은 순서). */
     public record SheetStat(String sheet, long total, long flagged, long termMiss, long done) {}
     public record TranslationUpdate(String text) {}
-    /** 셀 저장 결과. propagated는 원문이 같아서 같이 바뀐 다른 행 수. */
-    public record SaveResult(SegmentRow row, int propagated) {}
+    /** 셀 저장 결과. propagated는 원문이 같아서 같이 바뀐 다른 행 수. activityId는 판이 실제로 써졌을 때의 변경 내역 id(안 바뀌면 null). */
+    public record SaveResult(SegmentRow row, int propagated, Long activityId) {}
     /** sheet가 있으면 그 시트의 플래그 행만 다듬는다(검토 화면의 시트 탭). null이면 프로젝트 전체. */
     public record ShortenRequest(Double ratio, String sheet) {}
     /** segmentIds가 있으면 그 행 가운데, 없으면 sheet(없으면 전체)의 용어 누락 행을 고친다. */

@@ -59,6 +59,7 @@ public class Segment {
     /** 검수 체크(설계 2026-09-28). 1차·2차·확인 필요는 표시일 뿐 행을 잠그지 않는다. */
     private boolean review1;
     private boolean review2;
+    private boolean review3;
     private boolean needsCheck;
     /** 확정(2026-10-06). 같은 원문 전파·단어장 일괄 적용·되돌리기는 확정 행을 건너뛴다. 손 편집은 막지 않는다. */
     private boolean confirmed;
@@ -71,6 +72,9 @@ public class Segment {
     /** 최신 리비전의 한국어(Fix). DB 트리거(V14)가 유지하므로 여기서는 읽기만 한다. 리비전이 없으면 null. */
     @Column(insertable = false, updatable = false)
     private String latestKo;
+    /** 글 종류(V35, 교정 규칙). GPT가 한 번 붙인 코드 E·I·Q·S·H·T·D·N·U, null = 미판단. 네이티브 update로만 쓴다. */
+    @Column(insertable = false, updatable = false)
+    private Character textKind;
     /** 조사 검사(V20). 셋 다 네이티브 update로만 쓴다 — 엔티티를 통째로 저장하는 경로가 낡은 값으로 덮지 않게.
      *  null = 검사 대상 아님(아무도 안 열었고 번역도 안 바뀜), false = 검사 대기, true = 검사함. */
     @Column(insertable = false, updatable = false)

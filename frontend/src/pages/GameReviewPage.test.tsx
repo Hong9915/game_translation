@@ -9,14 +9,14 @@ import { WorkspacePage } from './WorkspacePage'
 
 /** 게임 전체 리뷰 화면(설계 2026-10-12): /games/:gameId/review. 파일 둘(삼국_텍스트·삼국_UI), 시트 셋. */
 const sheet = (configId: number, projectId: number, fileName: string, name: string, total: number) =>
-  ({ sheet: name, total, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, configId, projectId, fileName })
+  ({ sheet: name, total, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, configId, projectId, fileName })
 const summary = {
   sheets: [sheet(21, 1, '삼국_텍스트.xlsx', 'Skill', 2), sheet(22, 1, '삼국_텍스트.xlsx', 'Item', 1), sheet(31, 2, '삼국_UI.xlsx', 'UI', 1)],
-  total: 4, changed: 0, review1: 0, review2: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, unassigned: 4, reviewers: [],
+  total: 4, changed: 0, review1: 0, review2: 0, review3: 0, needsCheck: 0, confirmed: 0, josa: 0, josaPending: 0, unassigned: 4, reviewers: [],
 }
 const row = (id: number, projectId: number, sheetName: string, rowNo: number) => ({
   id, rowNo, pairIndex: 0, indexLabel: `${sheetName}!${rowNo}`, keyText: `K${id}`, src: `源${id}`, en: null, existingKo: null, fix: `한${id}`, changed: false,
-  termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, note: null, lastEditor: null,
+  termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, review3: false, needsCheck: false, confirmed: false, note: null, lastEditor: null,
   lastEditedAt: null, history: [], dupCount: 0, projectId, sheet: sheetName,
 })
 const rows = [row(10, 1, 'Skill', 2), row(11, 1, 'Skill', 3), row(12, 1, 'Item', 2), row(13, 2, 'UI', 2)]

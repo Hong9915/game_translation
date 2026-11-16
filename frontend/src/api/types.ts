@@ -11,10 +11,22 @@ export interface Project {
   reviewOnly?: boolean
   /** 시트 중 하나라도 최종 리뷰 버전(수정 한국어 열)으로 정규화했으면 true — 파일 목록의 "최종 리뷰" 배지. */
   finalReview?: boolean
+  /** 정규화한 검수 행 수(건너뛴 행 빼고)와 그중 확정 행 수 — 파일 목록의 진행 막대. 옛 응답에는 없을 수 있다. */
+  reviewRows?: number
+  confirmedRows?: number
 }
 
 /** 게임 하나와 공유 자산 요약: 파일 수, 번역 메모리 문장 수, 마지막 업로드 시각, DeepL 지시문(한 줄에 하나). */
-export interface Game { id: number; name: string; projects: number; memory: number; lastUploadedAt: string | null; createdAt: string; deeplInstructions?: string | null }
+/** 게임마다 한 장인 팀 메모. content는 Tiptap 문서 JSON 문자열, 저장한 적 없으면 null·version 0. */
+export interface GameMemo { content: string | null; version: number; updatedAt: string | null; updatedByName: string | null }
+
+export interface Game {
+  id: number; name: string; projects: number; memory: number; lastUploadedAt: string | null; createdAt: string; deeplInstructions?: string | null
+  /** GPT 번역·다듬기 기본 지시문(서버 코드)과 이 게임이 덧붙인 글. */
+  gptTranslateBase?: string; gptTranslateExtra?: string | null; gptPolishBase?: string; gptPolishExtra?: string | null
+  /** 모든 파일의 검수 행 수와 그중 확정 행 수 — 게임 목록의 진행 막대. */
+  reviewRows?: number; confirmedRows?: number
+}
 
 /** LLM 사용량 합계. priced가 false면 가격 정보가 없어 비용 대신 토큰 수만 쓴다. */
 export interface UsageSummary { calls: number; promptTokens: number; completionTokens: number; reasoningTokens: number; costUsd: number; priced: boolean }
@@ -90,7 +102,7 @@ export interface SegmentRow {
   lastEditor?: ReviewerRef | null; lastEditedAt?: string | null
 }
 /** 셀 저장 결과. propagated: 원문이 같아서 같이 바뀐 다른 행 수. */
-export interface SaveResult { row: SegmentRow; propagated: number }
+export interface SaveResult { row: SegmentRow; propagated: number; activityId: number | null }
 
 export interface ExportPreview {
   fileName: string; outputFileName: string; sheetName: string; otherSheetCount: number
@@ -120,16 +132,16 @@ export type ReviewEvent =
   | { type: 'refresh'; by: number | null }
   | { type: 'glossary'; by: number | null }
   // 검수 체크·비고. null인 체크는 안 바뀐 것, noteChanged면 note(null이면 지움)를 반영한다.
-  | { type: 'marks'; by: number | null; segmentIds: number[]; review1: boolean | null; review2: boolean | null; needsCheck: boolean | null; confirmed: boolean | null; note: string | null; noteChanged: boolean; finalMark?: boolean | null }
+  | { type: 'marks'; by: number | null; segmentIds: number[]; review1: boolean | null; review2: boolean | null; review3?: boolean | null; needsCheck: boolean | null; confirmed: boolean | null; note: string | null; noteChanged: boolean; finalMark?: boolean | null }
   // 일괄 체크가 커서 행 목록 없이 온 신호: 그 시트 목록·요약을 다시 읽는다.
   | { type: 'marks-bulk'; by: number | null; sheet: string }
 
 /** 검수 워크스페이스(설계 §1.2·§4). MINE은 헤더의 검토자 담당 행. */
 /** 검색어를 찾을 칸. DEFAULT = 원문·Fix·비고(ID는 안 찾는다), EXISTING_KO = 기존 한국어에서만, SRC_EXACT = 원문이 글자 그대로 같은 행만(모아 보기), SRC_CONTAINS = 원문에 검색어가 든 행만(포함된 행 보기). */
 export type SearchIn = 'DEFAULT' | 'EXISTING_KO' | 'SRC_EXACT' | 'SRC_CONTAINS'
-export type RowFilter = 'ALL' | 'CHANGED' | 'NOT_REVIEW1' | 'NOT_REVIEW2' | 'NOT_CONFIRMED' | 'NEEDS_CHECK' | 'FINAL_MARK' | 'NOT_FINAL_MARK' | 'MINE' | 'UNASSIGNED' | 'TERM_MISS' | 'EMPTY_FIX' | 'JOSA' | 'DUP_CONFLICT'
+export type RowFilter = 'ALL' | 'CHANGED' | 'NOT_REVIEW1' | 'NOT_REVIEW2' | 'NOT_REVIEW3' | 'NOT_CONFIRMED' | 'NEEDS_CHECK' | 'FINAL_MARK' | 'NOT_FINAL_MARK' | 'MINE' | 'UNASSIGNED' | 'TERM_MISS' | 'EMPTY_FIX' | 'JOSA' | 'DUP_CONFLICT'
 export const ROW_FILTER_LABEL: Record<RowFilter, string> = {
-  ALL: '전체', CHANGED: '수정됨', NOT_REVIEW1: 'A 안 함', NOT_REVIEW2: 'B 안 함', NOT_CONFIRMED: '확정 안 함', NEEDS_CHECK: '확인 필요', FINAL_MARK: '최종 수정 표시', NOT_FINAL_MARK: '최종 수정 안 함', MINE: '내 담당', UNASSIGNED: '미배정', TERM_MISS: '용어 불일치', EMPTY_FIX: 'Fix 비어 있음', JOSA: '조사 확인', DUP_CONFLICT: '동일 원문 불일치',
+  ALL: '전체', CHANGED: '수정됨', NOT_REVIEW1: 'A 안 함', NOT_REVIEW2: 'B 안 함', NOT_REVIEW3: 'C 안 함', NOT_CONFIRMED: '확정 안 함', NEEDS_CHECK: '확인 필요', FINAL_MARK: '최종 수정 표시', NOT_FINAL_MARK: '최종 수정 안 함', MINE: '내 담당', UNASSIGNED: '미배정', TERM_MISS: '용어 불일치', EMPTY_FIX: 'Fix 비어 있음', JOSA: '조사 확인', DUP_CONFLICT: '동일 원문 불일치',
 }
 /** 조사 제안(설계 2026-10-07). at = fix에서 from이 시작하는 위치(UTF-16, JS 문자열 인덱스와 같다). */
 export type JosaKind = 'HANGUL' | 'NUMBER' | 'TAG'
@@ -144,7 +156,7 @@ export interface WorkspaceRow {
   // 조사 제안. 무시한 행은 빈 배열.
   josaHints: JosaHint[]
   // 검수 체크(1차·2차·확인 필요·확정, 서로 독립)와 비고. 확정만 행을 자동 변경(같은 원문 반영·단어장 일괄 적용·되돌리기)에서 뺀다 — 조사 고침은 예외로 확정 행도 고친다.
-  review1: boolean; review2: boolean; needsCheck: boolean; confirmed: boolean; note: string | null
+  review1: boolean; review2: boolean; review3: boolean; needsCheck: boolean; confirmed: boolean; note: string | null
   // 최종 리뷰 레인(설계 2026-10-17)이면 finalReview. finalMark는 사람이 켜는 "최종 수정" 표시 — 최종 리뷰 시트에서만 보이고 칠한다.
   finalReview: boolean; finalMark: boolean
   lastEditor: ReviewerRef | null; lastEditedAt: string | null; history: RevisionDto[]
@@ -156,19 +168,19 @@ export interface WorkspaceRow {
 export interface RowShortenResult { ko: string; len: number; target: number; candidates: { ko: string; len: number }[] }
 export interface WorkspaceRowsResponse { rows: WorkspaceRow[]; page: number; size: number; total: number }
 /** 검수 체크 칸 이름. */
-export type MarkKey = 'review1' | 'review2' | 'needsCheck' | 'confirmed' | 'finalMark'
+export type MarkKey = 'review1' | 'review2' | 'review3' | 'needsCheck' | 'confirmed' | 'finalMark'
 /** 행 체크·비고 변경. 준 칸만 바뀐다(1차·2차·확인 필요·확정은 서로 독립). */
-export interface MarksPatch { review1?: boolean; review2?: boolean; needsCheck?: boolean; confirmed?: boolean; finalMark?: boolean; note?: string | null }
+export interface MarksPatch { review1?: boolean; review2?: boolean; review3?: boolean; needsCheck?: boolean; confirmed?: boolean; finalMark?: boolean; note?: string | null }
 /** configId: 정규화 설정 id(게임 화면의 시트 고르기 값, 설정 없이 행만 남은 시트면 null). projectId·fileName: 그 시트의 파일. */
 export interface SheetSummary {
-  sheet: string; total: number; changed: number; review1: number; review2: number; needsCheck: number; confirmed: number; josa: number; josaPending: number
+  sheet: string; total: number; changed: number; review1: number; review2: number; review3: number; needsCheck: number; confirmed: number; josa: number; josaPending: number
   configId?: number | null; projectId?: number; fileName?: string
   // 그 시트의 레인(최종 리뷰면 true)과 최종 수정 표시 수
   finalReview?: boolean; finalMark?: number
 }
 /** sheets는 항상 전체(정규화 설정 순). 나머지는 sheet를 주면 그 시트 기준. reviewers[].done은 담당 행 중 2차 체크 수. */
 export interface WorkspaceSummary {
-  sheets: SheetSummary[]; total: number; changed: number; review1: number; review2: number; needsCheck: number; confirmed: number
+  sheets: SheetSummary[]; total: number; changed: number; review1: number; review2: number; review3: number; needsCheck: number; confirmed: number
   unassigned: number; reviewers: ReviewerProgress[]; josa: number
   // 조사 검사 대기 행(누군가 연 파일·고친 행 중 아직 판정 전). 0보다 크면 화면이 요약을 주기적으로 다시 읽는다.
   josaPending: number
@@ -222,7 +234,7 @@ export interface CommandStep { find: string; replace: string; regex: boolean }
 export type OpKind = 'REPLACE' | 'TAG_SPACING' | 'JOSA' | 'UNIFY_SAME_SOURCE' | 'SHORTEN' | 'TERM'
 /** 작업 목록의 작업 하나. filter·steps는 REPLACE만, src(원문 용어)·ko(바꿀 한국어)는 TERM만. */
 export interface OpSpec { kind: OpKind; filter?: CommandFilter | null; steps?: CommandStep[]; src?: string; ko?: string }
-export interface CommandWarning { kind: 'JOSA' | 'TAG' | 'LENGTH'; text: string }
+export interface CommandWarning { kind: 'JOSA' | 'TAG' | 'LENGTH' | 'INSERT'; text: string }
 /** FIX면 after·by·warnings, CHECK면 mismatch(after는 null). target은 길이 줄이기·길이 검사의 목표 글자 수. */
 export interface CommandRow {
   segmentId: number; rowNo: number; src: string; before: string; after: string | null
@@ -234,20 +246,32 @@ export interface CommandPlan { summary: string | null; kind: 'FIX' | 'CHECK'; op
 export interface CommandPreset { id: number; name: string; ops: OpSpec[] }
 
 /** 변경 내역(설계 2026-09-30). */
-export type ActivityKind = 'EDIT' | 'RETRANSLATE' | 'FIX_TERMS' | 'SHORTEN' | 'GLOSSARY_APPLY' | 'GLOSSARY_EDIT' | 'REVERT' | 'JOSA_FIX' | 'TAG_SPACING' | 'COMMAND_FIX'
+export type ActivityKind = 'EDIT' | 'RETRANSLATE' | 'FIX_TERMS' | 'SHORTEN' | 'GLOSSARY_APPLY' | 'GLOSSARY_EDIT' | 'REVERT' | 'JOSA_FIX' | 'TAG_SPACING' | 'COMMAND_FIX' | 'POLISH' | 'RULE_APPLY'
 export const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
-  EDIT: '번역 수정', RETRANSLATE: '다시 번역', FIX_TERMS: '용어 치환', SHORTEN: '줄이기', GLOSSARY_APPLY: '단어장 일괄 적용', GLOSSARY_EDIT: '단어장 편집', REVERT: '되돌림', JOSA_FIX: '조사 고침', TAG_SPACING: '태그 띄어쓰기', COMMAND_FIX: '명령으로 고치기',
+  EDIT: '번역 수정', RETRANSLATE: '다시 번역', FIX_TERMS: '용어 치환', SHORTEN: '줄이기', GLOSSARY_APPLY: '단어장 일괄 적용', GLOSSARY_EDIT: '단어장 편집', REVERT: '되돌림', JOSA_FIX: '조사 고침', TAG_SPACING: '태그 띄어쓰기', COMMAND_FIX: '명령으로 고치기', POLISH: 'GPT로 다듬기', RULE_APPLY: '교정 규칙 적용',
 }
 export type GlossaryAction = 'ADD' | 'UPDATE' | 'DELETE' | 'SHARE'
 export const GLOSSARY_ACTION_LABEL: Record<GlossaryAction, string> = { ADD: '추가', UPDATE: '수정', DELETE: '삭제', SHARE: '공유' }
 /** projectId: 그 행이 든 파일 — 같은 원문 전파는 게임의 다른 파일 행도 바꾸므로 지금 프로젝트와 다를 수 있다(점프는 같은 파일만).
  * before: 바로 앞 판(첫 판이면 null). ordinal: 그 시트 전체 보기에서의 0-기반 위치 — 점프에 쓴다. */
 export interface ActivityRowItem { segmentId: number; projectId: number; sheet: string; rowNo: number; ordinal: number; before: string | null; after: string }
+/** 여러 행 다시 번역의 엔진. 서버 설정과 무관하게 요청이 고른다. */
+export type TranslateEngine = 'DEEPL' | 'GPT'
+/** 여러 행 다시 번역 결과. skipped.reason: 확정 | 제외 | 번역 결과 없음. activityIds: 다음 묶음에 그대로 넘길 프로젝트 id → 변경 내역 id. */
+export interface BatchTranslateResult { rows: WorkspaceRow[]; skipped: { id: number; reason: string }[]; activityIds: Record<string, number> }
+/** GPT로 다듬기 제안 하나. before: 지금 Fix, after: 고친 안. */
+export interface PolishProposal { segmentId: number; before: string; after: string; reason: string | null }
+/** 다듬기 제안(저장 안 함). kept: 고칠 데 없다고 본 행 수. skipped.reason: 확정 | 제외 | Fix 없음 | 자리표시자 어긋남 | 다듬기 결과 없음. */
+export interface PolishResult { items: PolishProposal[]; kept: number; skipped: { id: number; reason: string }[] }
+/** 일괄 넣기 한 행. base: 제안을 받을 때의 Fix(before) — 그 사이 바뀌었으면 서버가 건너뛴다. */
+export interface SaveBatchItem { segmentId: number; text: string; base: string | null }
+/** propagated: 같은 원문이라 따라 바뀐 행 수. activityIds: 이번에 만든 POLISH 변경 내역(파일마다 하나) — Ctrl+Z에 쓴다. */
+export interface SaveBatchResult { saved: number; skipped: number; propagated: number; activityIds: number[] }
 export interface ActivityFeedItem {
   id: number; kind: ActivityKind; reviewer: ReviewerRef | null; createdAt: string; rowCount: number; sheet: string | null
   /** EDIT·RETRANSLATE의 대상 행. 같은 값을 다시 저장해 대상 행엔 판이 없으면 null. */
   primary: ActivityRowItem | null
-  detail: { segmentId?: number; sheet?: string; action?: GlossaryAction; kind?: GlossaryKind; find?: string; ko?: string | null; oldKo?: string | null; revertOf?: number }
+  detail: { segmentId?: number; sheet?: string; action?: GlossaryAction; kind?: GlossaryKind; find?: string; ko?: string | null; oldKo?: string | null; revertOf?: number; engine?: TranslateEngine }
   /** 항목의 파일. 단어장 편집처럼 게임 단위면 null. */
   projectId?: number | null
 }
@@ -263,8 +287,27 @@ export interface TermRequestItem {
   id: number; seq: number; category: TermCategory; src: string
   renderings: GlossaryRendering[]; source: 'CORPUS' | 'GPT'; gptKo: string | null; gptReason: string | null
   status: TermItemStatus; finalKo: string | null; existingKo: string | null; existingNote: string | null
+  /** GPT로 표기 확인을 마쳤는지와 그 까닭(2026-11-02). */
+  gptChecked: boolean; gptFindReason: string | null
 }
 export interface TermRequestDetail { id: number; gameId: number; fileName: string; createdAt: string; items: TermRequestItem[] }
 export interface TermRequestSummary { id: number; fileName: string; createdAt: string; total: number; approved: number; pending: number }
 export interface TermApproveItem { itemId: number; ko: string; replace: string[] }
 export interface TermApproveResult { approved: number; applied: number; request: TermRequestDetail }
+
+/** 교정 규칙(설계 2026-11-13) — 문체(서술식→개조식)만. ratio = 개조식으로 바꾼 비율. verdict: RULE|KEEP|DECIDE|INSUFFICIENT. */
+export interface CorrectionRule {
+  id: number; type: 'WORD' | 'STYLE' | 'PERIOD'; of: string; nf: string; textKind: string | null; anchor: string | null; anchors: string[]
+  fixed: number; left: number; candidates: number; ratio: number; sameAsHuman: number; flipped: boolean
+  status: 'SUGGESTED' | 'APPROVED' | 'IGNORED'; verdict: string | null; converted: number; kept: number; appliedCount: number; lastEdit: string | null
+}
+export interface RuleList { learnedAt: string | null; unjudgedRows: number; estimateUsd: number; rules: CorrectionRule[] }
+export interface RulePreviewRow {
+  segmentId: number; projectId: number; fileName: string | null; sheet: string | null; rowNo: number; src: string
+  before: string; after: string; complete: boolean; checked: boolean
+}
+export interface RulePreview {
+  rows: RulePreviewRow[]; excluded: RulePreviewRow[]
+}
+export interface RuleApplyRequest { checked: { segmentId: number; before: string; after: string }[]; unchecked: number[] }
+export interface RuleApplyResult { applied: number; skippedChanged: number }

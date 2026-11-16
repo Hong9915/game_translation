@@ -10,9 +10,13 @@ public final class TermRequestDtos {
     /** 지난 요청 목록 한 줄. pending = 아직 GPT 초안을 기다리는 항목 수. */
     public record RequestSummary(long id, String fileName, Instant createdAt, int total, int approved, int pending) {}
 
-    /** 요청 항목. existingKo·existingNote = 지금 게임 단어장에 같은 원문(SRC) 항목이 있으면 그 번역·메모, 없으면 null. */
+    /**
+     * 요청 항목. existingKo·existingNote = 지금 게임 단어장에 같은 원문(SRC) 항목이 있으면 그 번역·메모, 없으면 null.
+     * gptChecked·gptFindReason = GPT로 표기 확인을 마쳤는지와 그 까닭(설계 2026-11-02).
+     */
     public record ItemDto(long id, int seq, String category, String src, List<GlossaryDtos.Rendering> renderings, String source,
-                          String gptKo, String gptReason, String status, String finalKo, String existingKo, String existingNote) {}
+                          String gptKo, String gptReason, String status, String finalKo, String existingKo, String existingNote,
+                          boolean gptChecked, String gptFindReason) {}
 
     public record RequestDto(long id, long gameId, String fileName, Instant createdAt, List<ItemDto> items) {}
 

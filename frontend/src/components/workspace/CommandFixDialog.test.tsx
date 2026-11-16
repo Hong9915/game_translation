@@ -111,6 +111,21 @@ describe('CommandFixDialog', () => {
     expect(screen.getByRole('button', { name: '1행 고치기' })).toBeEnabled()
   })
 
+  it('용어를 끼워 넣기만 한 행(INSERT)은 경고를 보이고 체크를 꺼 둔다', async () => {
+    const termPlan = { summary: '任务를 퀘스트로 바꿉니다.', kind: 'FIX', ops: [{ kind: 'TERM', src: '任务', ko: '퀘스트' }], trail: [], rows: [
+      { segmentId: 31, rowNo: 1, src: '完成任务', before: '임무 완료', after: '퀘스트 완료', by: ['TERM'], warnings: [], mismatch: null },
+      { segmentId: 32, rowNo: 2, src: '累充任务活动', before: '누적 충전 이벤트', after: '누적 충전 이벤트 퀘스트', by: ['TERM'],
+        warnings: [{ kind: 'INSERT', text: '끼워 넣음 — 원래 번역에서 바꾼 말이 없어요. 자리가 맞는지 보세요' }], mismatch: null },
+    ] }
+    mockFetch(routes(termPlan))
+    render()
+    await ask('任务 번역을 다 퀘스트로 바꿔줘')
+    expect(await screen.findByRole('checkbox', { name: '퀘스트 완료' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: '누적 충전 이벤트 퀘스트' })).not.toBeChecked()
+    expect(screen.getByText(/끼워 넣음/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '1행 고치기' })).toBeEnabled()
+  })
+
   it('고치기는 시트·명령·작업 목록·고른 행을 보낸다', async () => {
     const { calls } = mockFetch(routes())
     const { onFixed } = render()

@@ -38,6 +38,8 @@ class TermRequestControllerTest extends IntegrationTest {
         fake = (FakeLlmClient) llm;
         fake.termDrafts.clear();
         fake.draftCalls.clear();
+        fake.toolTurns.clear();
+        fake.toolMessages.clear();
     }
 
     Long game() throws Exception {
@@ -369,5 +371,96 @@ class TermRequestControllerTest extends IntegrationTest {
     @Test
     void generateRejectsUnknownRequest() throws Exception {
         generate(999999L).andExpect(status().isNotFound());
+    }
+
+    // ── GPT로 표기 확인(2026-11-02) ──
+
+    ResultActions find(long requestId) throws Exception {
+        return mvc.perform(post("/api/glossary/requests/{id}/find", requestId));
+    }
+
+    /** 陷阱 하나짜리 요청(통계: 함정 4 / 트랩 2). 용어가 하나라 GPT 대본 순서가 흔들리지 않는다. */
+    long uploadTrapOnly(Long gameId) throws Exception {
+        byte[] form = TestWorkbooks.termRequestForm(new String[][]{{"陷阱", null, null, null, null, null, null}});
+        String body = upload(gameId, "陷阱.xlsx", form).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        return JsonPath.parse(body).read("$.id", Long.class);
+    }
+
+    void scriptFinish(String args) {
+        fake.toolTurns.add(new LlmClient.AssistantTurn(null, java.util.List.of(new LlmClient.ToolCall("c" + fake.toolTurns.size(), "finish", args))));
+    }
+
+    @Test
+    void findReplacesRenderingsWithGptPick() throws Exception {
+        long id = uploadTrapOnly(game());
+        scriptFinish("{\"renderings\":[{\"ko\":\"함정\"}],\"reason\":\"트랩은 다른 문장\"}");
+        find(id).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].renderings.length()").value(1))
+                .andExpect(jsonPath("$.items[0].renderings[0].ko").value("함정"))
+                .andExpect(jsonPath("$.items[0].renderings[0].rows").value(4))
+                .andExpect(jsonPath("$.items[0].gptChecked").value(true))
+                .andExpect(jsonPath("$.items[0].gptFindReason").value("트랩은 다른 문장"))
+                .andExpect(jsonPath("$.items[0].status").value("READY"))
+                .andExpect(jsonPath("$.items[0].source").value("CORPUS"));
+    }
+
+    @Test
+    void noneTurnsItemToGptDraft() throws Exception {
+        long id = uploadTrapOnly(game());
+        fake.termDrafts.put("陷阱", "덫");
+        scriptFinish("{\"none\":true,\"reason\":\"번역본에 없음\"}");
+        find(id).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].renderings").isEmpty())
+                .andExpect(jsonPath("$.items[0].source").value("GPT"))
+                .andExpect(jsonPath("$.items[0].gptKo").value("덫"))
+                .andExpect(jsonPath("$.items[0].status").value("READY"))
+                .andExpect(jsonPath("$.items[0].gptChecked").value(true));
+        assertThat(fake.draftCalls).hasSize(1);
+    }
+
+    @Test
+    void failedFindLeavesStatisticsAndCanRetry() throws Exception {
+        long id = uploadTrapOnly(game());
+        find(id).andExpect(status().isOk())   // 대본이 비어 GPT가 글만 낸다 — 실패
+                .andExpect(jsonPath("$.items[0].renderings.length()").value(2))
+                .andExpect(jsonPath("$.items[0].renderings[0].ko").value("함정"))
+                .andExpect(jsonPath("$.items[0].renderings[1].ko").value("트랩"))
+                .andExpect(jsonPath("$.items[0].gptChecked").value(false));
+        scriptFinish("{\"renderings\":[{\"ko\":\"함정\"}]}");
+        find(id).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].gptChecked").value(true))
+                .andExpect(jsonPath("$.items[0].renderings.length()").value(1));
+    }
+
+    @Test
+    void secondFindSkipsCheckedItems() throws Exception {
+        long id = uploadTrapOnly(game());
+        scriptFinish("{\"renderings\":[{\"ko\":\"함정\"}]}");
+        find(id).andExpect(status().isOk());
+        int calls = fake.toolMessages.size();
+        find(id).andExpect(status().isOk()).andExpect(jsonPath("$.items[0].gptChecked").value(true));
+        assertThat(fake.toolMessages).hasSize(calls);
+    }
+
+    @Test
+    void skipsApprovedAndSingleCharItems() throws Exception {
+        Long g = game();
+        Uploaded r = uploadForm(g);
+        approve(r.id(), "{\"items\":[{\"itemId\":" + r.items().get(0) + ",\"ko\":\"함정\"}]}").andExpect(status().isOk());
+        scriptFinish("{\"none\":true,\"reason\":\"번역본에 없음\"}");
+        scriptFinish("{\"none\":true,\"reason\":\"번역본에 없음\"}");
+        find(r.id()).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].status").value("APPROVED"))
+                .andExpect(jsonPath("$.items[0].gptChecked").value(false))
+                .andExpect(jsonPath("$.items[3].src").value("金"))
+                .andExpect(jsonPath("$.items[3].gptChecked").value(false))
+                .andExpect(jsonPath("$.items[1].gptChecked").value(true))
+                .andExpect(jsonPath("$.items[2].gptChecked").value(true));
+        assertThat(fake.toolMessages).hasSize(2);   // 每日·暗影狼王만
+    }
+
+    @Test
+    void findUnknownRequestIs404() throws Exception {
+        find(999999L).andExpect(status().isNotFound());
     }
 }

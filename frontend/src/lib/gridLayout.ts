@@ -2,24 +2,28 @@ import { useCallback, useState } from 'react'
 import type { Col } from './gridNav'
 
 /**
- * 검수 표의 보기 설정(2026-10-12): 숨긴 열, 행 높이(모든 행 같이), 열 너비. 서버에 저장하지 않고 이 브라우저에만 기억한다 —
+ * 검수 표의 보기 설정(2026-10-12): 숨긴 열, 행 높이(모든 행 같이), 열 너비, 입력줄 높이(2026-11-13). 서버에 저장하지 않고 이 브라우저에만 기억한다 —
  * 다른 사람 화면·내보내기·일괄 도구에는 영향이 없다. 파일 화면과 게임 화면이 같이 쓴다.
  */
 export type WidthCol = Col | 'place'
 export type ColWidths = Record<WidthCol, number>
 
 export const DEFAULT_WIDTHS: ColWidths = {
-  idx: 48, id: 128, place: 160, src: 224, en: 208, existingKo: 224, fix: 288, review1: 56, review2: 56, needsCheck: 56, confirmed: 56, finalMark: 64, note: 192,
+  idx: 64, id: 128, place: 160, src: 224, en: 208, existingKo: 224, fix: 288, review1: 56, review2: 56, review3: 56, needsCheck: 56, confirmed: 56, finalMark: 64, note: 192,
 }
 export const MIN_WIDTH = 40
 export const DEFAULT_ROW_HEIGHT = 26
 export const MAX_ROW_HEIGHT = 400
+/** 표 위 입력줄(선택한 칸 전체 글) 높이. 기본보다 낮게는 못 줄인다. */
+export const DEFAULT_BAR_HEIGHT = 70
+export const MAX_BAR_HEIGHT = 600
 /** 숨길 수 없는 열: # 칸(행 메뉴·높이 손잡이)과 Fix(편집하는 열). */
 export const UNHIDEABLE: ReadonlySet<WidthCol> = new Set<WidthCol>(['idx', 'fix'])
 
 const HIDDEN_COLS_KEY = 'gametrans.gridHiddenCols'
 const ROW_HEIGHT_KEY = 'gametrans.gridRowHeight'
 const WIDTHS_KEY = 'gametrans.gridColWidths'
+const BAR_HEIGHT_KEY = 'gametrans.gridBarHeight'
 
 function read(key: string): unknown {
   try { return JSON.parse(localStorage.getItem(key) ?? 'null') } catch { return null }
@@ -38,11 +42,17 @@ export function loadRowHeight(): number {
   const v = read(ROW_HEIGHT_KEY)
   return typeof v === 'number' && Number.isFinite(v) ? clampRowHeight(v) : DEFAULT_ROW_HEIGHT
 }
+const clampBarHeight = (h: number) => Math.min(MAX_BAR_HEIGHT, Math.max(DEFAULT_BAR_HEIGHT, Math.round(h)))
+function loadBarHeight(): number {
+  const v = read(BAR_HEIGHT_KEY)
+  return typeof v === 'number' && Number.isFinite(v) ? clampBarHeight(v) : DEFAULT_BAR_HEIGHT
+}
 function loadWidths(): ColWidths {
   const v = read(WIDTHS_KEY)
   const w = { ...DEFAULT_WIDTHS }
   if (v && typeof v === 'object' && !Array.isArray(v)) {
     for (const k of Object.keys(w) as WidthCol[]) {
+      if (k === 'idx') continue // # 칸은 손잡이가 없다 — 예전에 저장된 48이 새 기본 너비를 막지 않게
       const x = (v as Record<string, unknown>)[k]
       if (typeof x === 'number' && Number.isFinite(x)) w[k] = Math.max(MIN_WIDTH, Math.round(x))
     }
@@ -54,6 +64,7 @@ export function useGridLayout() {
   const [hiddenCols, setHiddenCols] = useState(loadHiddenCols)
   const [rowHeight, setRowHeightState] = useState(loadRowHeight)
   const [widths, setWidths] = useState(loadWidths)
+  const [barHeight, setBarHeightState] = useState(loadBarHeight)
 
   const updateHiddenCols = useCallback((f: (s: Set<WidthCol>) => void) => setHiddenCols((prev) => {
     const next = new Set(prev); f(next); write(HIDDEN_COLS_KEY, [...next]); return next
@@ -63,7 +74,7 @@ export function useGridLayout() {
   }), [])
 
   return {
-    hiddenCols, rowHeight, widths,
+    hiddenCols, rowHeight, widths, barHeight,
     hideCol: useCallback((c: WidthCol) => { if (!UNHIDEABLE.has(c)) updateHiddenCols((s) => s.add(c)) }, [updateHiddenCols]),
     showCol: useCallback((c: WidthCol) => updateHiddenCols((s) => s.delete(c)), [updateHiddenCols]),
     showAllCols: useCallback(() => updateHiddenCols((s) => s.clear()), [updateHiddenCols]),
@@ -71,6 +82,8 @@ export function useGridLayout() {
     resetRowHeight: useCallback(() => { write(ROW_HEIGHT_KEY, DEFAULT_ROW_HEIGHT); setRowHeightState(DEFAULT_ROW_HEIGHT) }, []),
     setWidth: useCallback((c: WidthCol, w: number) => updateWidths((x) => { x[c] = Math.max(MIN_WIDTH, Math.round(w)) }), [updateWidths]),
     resetWidth: useCallback((c: WidthCol) => updateWidths((x) => { x[c] = DEFAULT_WIDTHS[c] }), [updateWidths]),
+    setBarHeight: useCallback((h: number) => { const v = clampBarHeight(h); write(BAR_HEIGHT_KEY, v); setBarHeightState(v) }, []),
+    resetBarHeight: useCallback(() => { write(BAR_HEIGHT_KEY, DEFAULT_BAR_HEIGHT); setBarHeightState(DEFAULT_BAR_HEIGHT) }, []),
   }
 }
 

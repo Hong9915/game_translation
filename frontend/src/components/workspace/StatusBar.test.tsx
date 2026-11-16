@@ -3,14 +3,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { StatusBar } from './StatusBar'
 
 const summary = {
-  sheets: [{ sheet: 'UI', total: 1204, changed: 38, review1: 400, review2: 412, needsCheck: 9, confirmed: 0, josa: 0, josaPending: 0 }], total: 1204, changed: 38, review1: 400, review2: 412, needsCheck: 9, confirmed: 0, josa: 0, josaPending: 0, unassigned: 4,
+  sheets: [{ sheet: 'UI', total: 1204, changed: 38, review1: 400, review2: 412, review3: 0, needsCheck: 9, confirmed: 0, josa: 0, josaPending: 0 }], total: 1204, changed: 38, review1: 400, review2: 412, review3: 0, needsCheck: 9, confirmed: 0, josa: 0, josaPending: 0, unassigned: 4,
   reviewers: [{ reviewer: { id: 7, name: '지민', color: '#0c8599' }, assigned: 400, done: 248 }],
 }
 
 describe('StatusBar', () => {
   it('shows totals, per-reviewer progress, selection and save state', () => {
     render(<StatusBar summary={summary} sheet="UI" selection="4행 Fix" saveState="saved" />)
-    expect(screen.getByText('1,204행 · 수정됨 38 · A 400 · B 412 · 확인 필요 9 · 확정 0')).toBeInTheDocument()
+    expect(screen.getByText('1,204행 · 수정됨 38 · A 400 · B 412 · C 0 · 확인 필요 9 · 확정 0')).toBeInTheDocument()
     expect(screen.getByText(/⌘Enter A/)).toBeInTheDocument()
     expect(screen.getByText('지민')).toBeInTheDocument()
     expect(screen.getByText('248/400')).toBeInTheDocument()

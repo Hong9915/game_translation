@@ -128,6 +128,39 @@ describe('ActivityPanel', () => {
     expect(screen.getByRole('button', { name: '되돌리기' })).toBeInTheDocument()
   })
 
+  it('교정 규칙 적용은 라벨·행 수·되돌리기를 보여 준다', async () => {
+    const rule = { ...edit, id: 32, kind: 'RULE_APPLY', rowCount: 4, primary: null, detail: { ruleId: 1, type: 'WORD', of: '엘리트', nf: '에픽' } }
+    mockFetch([{ path: '/projects/1/activity', body: { items: [rule] } }])
+    render()
+    expect(await screen.findByText('교정 규칙 적용')).toBeInTheDocument()
+    expect(screen.getByText(/4행/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '되돌리기' })).toBeInTheDocument()
+  })
+
+  it('shows batch RETRANSLATE without primary row as expandable', async () => {
+    const batch = { ...edit, id: 33, kind: 'RETRANSLATE', rowCount: 12, primary: null, sheet: null, detail: { engine: 'GPT' } }
+    const { calls } = mockFetch([
+      { path: '/projects/1/activity', body: { items: [batch] } },
+      { path: '/activity/33/rows', body: { rows: [{ segmentId: 5, projectId: 1, sheet: 'UI', rowNo: 7, ordinal: 5, before: null, after: '새 번역' }], page: 0, size: 20, total: 12 } },
+    ])
+    render()
+    expect(await screen.findByText('다시 번역')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /같은 원문/ })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: '12행' }))
+    expect(await screen.findByRole('button', { name: 'UI 7행' })).toBeInTheDocument()
+    expect(calls.some((c) => c.url.includes('/activity/33/rows?page=0&size=20'))).toBe(true)
+    expect(screen.getByRole('button', { name: '되돌리기' })).toBeInTheDocument()
+  })
+
+  it('shows POLISH as a revertible job item', async () => {
+    const polish = { ...edit, id: 32, kind: 'POLISH', rowCount: 4, primary: null, detail: {} }
+    mockFetch([{ path: '/projects/1/activity', body: { items: [polish] } }])
+    render()
+    expect(await screen.findByText('GPT로 다듬기')).toBeInTheDocument()
+    expect(screen.getByText(/4행/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '되돌리기' })).toBeInTheDocument()
+  })
+
   it('단어장 일괄 적용의 되돌리기 확인에는 항목이 남는다는 안내가 붙는다', async () => {
     mockFetch([{ path: '/projects/1/activity', body: { items: [fixTerms, { ...fixTerms, id: 23, kind: 'GLOSSARY_APPLY', sheet: null, detail: {}, rowCount: 5 }] } }])
     render()

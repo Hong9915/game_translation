@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useProject, useProjectId } from '../api/hooks'
 import type { ColumnPair, NormalizeRequest, SheetOption, SourceLang } from '../api/types'
@@ -9,6 +9,7 @@ import { useDeepLInstructions } from '../lib/deeplInstructions'
 import { ColumnRoleTable } from '../components/normalize/ColumnRoleTable'
 import { SheetChips } from '../components/normalize/SheetChips'
 import { Button } from '../components/ui/Button'
+import { AppHeader } from '../components/ui/AppHeader'
 import { Card } from '../components/ui/Card'
 import { inputClass } from '../components/ui/Field'
 import { applyFinal, applyFixMode, applyRole, canOverwrite, defaultFixHeader, type FixMode, type RoleConfig } from '../lib/columnRoles'
@@ -123,160 +124,192 @@ export function NormalizePage() {
     : null
   const disabled = !config || config.pairs.some((p) => !p.srcCol) || finalProblem !== null
 
+  const configured = (current.data?.configs.length ?? 0) > 0
+  const steps = [
+    { label: '올리기', state: 'done' },
+    { label: '정규화', state: 'now' },
+    { label: '검수', state: configured ? 'ready' : 'todo' },
+  ] as const
+
   return (
-    <div className="flex min-h-screen flex-col gap-4 px-10 pt-9">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-muted">
-          {project && <Link to={`/games/${project.gameId}`} className="text-ink hover:underline">{project.gameName}</Link>}
-          {project && ' › '}
-          {project?.fileName}
-        </span>
-        {(current.data?.configs.length ?? 0) > 0 && (
-          <Button onClick={() => navigate(`/review/${id}`)}>검수로</Button>
-        )}
-      </div>
+    <div className="flex min-h-screen flex-col">
+      <AppHeader
+        crumbs={project ? [{ label: project.gameName, to: `/games/${project.gameId}` }, { label: project.fileName }] : []}
+        right={<>
+          <ol aria-label="진행 단계" className="hidden items-center gap-1.5 text-xs md:flex">
+            {steps.map((st, i) => (
+              <li key={st.label} aria-current={st.state === 'now' ? 'step' : undefined}
+                className={`rounded-full px-2.5 py-1 ${st.state === 'done' ? 'bg-greenSoft font-semibold text-green' : st.state === 'now' ? 'bg-primary font-semibold text-white' : 'bg-lineSoft text-body'}`}>
+                {st.state === 'done' ? '✓ ' : `${i + 1} `}{st.label}
+              </li>
+            ))}
+          </ol>
+          {configured && <Button onClick={() => navigate(`/review/${id}`)}>검수로</Button>}
+        </>}
+      />
 
-      <Card className="flex flex-col gap-3 p-4">
-        <SheetChips
-          chips={chips}
-          active={adding ? null : sheet}
-          addOptions={addOptions}
-          adding={adding}
-          confirmingRemove={confirmRemove}
-          removing={removeMutation.isPending}
-          onSelect={(name) => { setSheet(name); setConfig(null); setAdding(false); setConfirmRemove(null); setConfirmRerun(false) }}
-          onStartAdd={() => { qc.invalidateQueries({ queryKey: ['normalize-current', id] }); setAdding(true); setConfirmRemove(null) }}
-          onCancelAdd={() => setAdding(false)}
-          onPickAdd={(name) => { setSheet(name); setConfig(null); setHeaderRow(1); setAdding(false); setConfirmRerun(false) }}
-          onAskRemove={(name) => setConfirmRemove(name)}
-          onCancelRemove={() => setConfirmRemove(null)}
-          onConfirmRemove={(name) => removeMutation.mutate(name)}
-        />
-
-        <div className="flex items-center gap-2 text-xs text-muted">
-          <label className="flex items-center gap-1.5 whitespace-nowrap">
-            헤더 행
-            <select aria-label="헤더 행" className={`${inputClass} w-20`} value={headerRow}
-              onChange={(e) => { setHeaderRow(Number(e.target.value)); setConfig(null); setConfirmRerun(false) }}>
-              {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </label>
-          {config && (
-            <label className="ml-4 flex items-center gap-1.5 whitespace-nowrap text-[13px] text-ink">
-              <input type="checkbox" checked={finalReview} onChange={(e) => pickFinal(e.target.checked)} />
-              최종 리뷰 버전
-              <span className="text-xs text-muted">— 이미 고친 한국어 열(수정 한국어)도 읽는다</span>
+      <main className="mx-auto flex w-full max-w-[1232px] flex-wrap items-start gap-5 px-6 pb-16 pt-6">
+        <section aria-label="시트와 열" className="flex min-w-0 flex-[999_1_640px] flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <SheetChips
+              chips={chips}
+              active={adding ? null : sheet}
+              addOptions={addOptions}
+              adding={adding}
+              confirmingRemove={confirmRemove}
+              removing={removeMutation.isPending}
+              onSelect={(name) => { setSheet(name); setConfig(null); setAdding(false); setConfirmRemove(null); setConfirmRerun(false) }}
+              onStartAdd={() => { qc.invalidateQueries({ queryKey: ['normalize-current', id] }); setAdding(true); setConfirmRemove(null) }}
+              onCancelAdd={() => setAdding(false)}
+              onPickAdd={(name) => { setSheet(name); setConfig(null); setHeaderRow(1); setAdding(false); setConfirmRerun(false) }}
+              onAskRemove={(name) => setConfirmRemove(name)}
+              onCancelRemove={() => setConfirmRemove(null)}
+              onConfirmRemove={(name) => removeMutation.mutate(name)}
+            />
+            <label className="flex items-center gap-2 whitespace-nowrap text-[13px] text-body">
+              헤더 행
+              <select aria-label="헤더 행" className={`${inputClass} w-20`} value={headerRow}
+                onChange={(e) => { setHeaderRow(Number(e.target.value)); setConfig(null); setConfirmRerun(false) }}>
+                {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
             </label>
+          </div>
+
+          {error && (
+            <div role="alert" className="flex items-center justify-between rounded-lg border border-orange bg-orangeSoft px-3 py-2 text-xs text-ink">
+              <span>{error}</span>
+              <button type="button" aria-label="오류 닫기" onClick={() => setError(null)} className="text-body hover:text-ink">✕</button>
+            </div>
           )}
-        </div>
 
-        {error && (
-          <div className="flex items-center justify-between rounded-md border border-orange bg-orangeSoft px-3 py-2 text-xs text-ink">
-            <span>{error}</span>
-            <button type="button" onClick={() => setError(null)} className="text-muted hover:text-ink">✕</button>
-          </div>
-        )}
-
-        {active && config && (
-          <ColumnRoleTable
-            headers={active.headers}
-            rows={active.preview}
-            config={config}
-            finalReview={finalReview}
-            fixHeader={!finalReview && fix === 'NEW' ? (config.pairs[0]?.koHeader ?? 'KR_Fix') : null}
-            onRole={(letter, value) => setConfig((c) => applyRole(c!, letter, value, fix))}
-          />
-        )}
-
-        {config && (
-          <div className="flex items-center gap-3">
-            <Button onClick={() => setConfig((c) => ({
-              ...c!,
-              pairs: [...c!.pairs, { srcCol: '', enCol: null, koColMode: 'NEW', koCol: null, koHeader: defaultFixHeader(c!.pairs.length) }],
-            }))}
-            >
-              + 원문·한국어 쌍 추가
-            </Button>
-          </div>
-        )}
-
-        {config && finalReview && (
-          <div className="border-t border-line px-4 py-3 text-[13px]">
-            <span className="font-semibold">수정 한국어(Fix)</span>
-            <span className="ml-3 text-xs text-muted">
-              기존 한국어는 원래 값으로, 수정 한국어는 지금 Fix로 들어갑니다. 내보낼 때 Fix는 수정 한국어 열에 씁니다.
-            </span>
-            {finalProblem && <p className="mt-1 text-xs text-orange">{finalProblem}</p>}
-          </div>
-        )}
-
-        {config && !finalReview && (
-          <fieldset className="flex flex-wrap items-center gap-4 border-t border-line px-4 py-3 text-[13px]">
-            <legend className="sr-only">수정 한국어(Fix) 쓸 곳</legend>
-            <span className="font-semibold">수정 한국어(Fix) 쓸 곳</span>
-            <label className="flex items-center gap-1.5">
-              <input type="radio" name="fix" checked={fix === 'NEW'} onChange={() => pickFix('NEW')} />
-              새 열로 추가
-            </label>
-            {fix === 'NEW' && (
-              <input aria-label="새 열 이름" className={`${inputClass} !w-32`} value={config.pairs[0]?.koHeader ?? ''}
-                onChange={(e) => setConfig((c) => ({ ...c!, pairs: c!.pairs.map((p, i) => (i === 0 ? { ...p, koHeader: e.target.value } : p)) }))} />
+          <Card className="overflow-hidden">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-lineSoft px-4 py-3">
+              <h2 className="text-[15px] font-semibold">열마다 역할을 고르세요</h2>
+              <span className="text-xs text-body">머리글 이름으로 미리 골라 두었습니다 · 앞 몇 행 미리 보기</span>
+            </div>
+            <div className="p-4">
+              {active && config
+                ? <ColumnRoleTable
+                    headers={active.headers}
+                    rows={active.preview}
+                    config={config}
+                    finalReview={finalReview}
+                    fixHeader={!finalReview && fix === 'NEW' ? (config.pairs[0]?.koHeader ?? 'KR_Fix') : null}
+                    onRole={(letter, value) => setConfig((c) => applyRole(c!, letter, value, fix))}
+                  />
+                : <p className="py-8 text-center text-[13px] text-body">시트를 읽는 중…</p>}
+            </div>
+            {config && (
+              <div className="border-t border-lineSoft px-4 py-3">
+                <Button onClick={() => setConfig((c) => ({
+                  ...c!,
+                  pairs: [...c!.pairs, { srcCol: '', enCol: null, koColMode: 'NEW', koCol: null, koHeader: defaultFixHeader(c!.pairs.length) }],
+                }))}
+                >
+                  + 원문·한국어 쌍 추가
+                </Button>
+              </div>
             )}
-            <label className="flex items-center gap-1.5">
-              <input type="radio" name="fix" checked={fix === 'OVERWRITE'} disabled={!canOverwrite(config)} onChange={() => pickFix('OVERWRITE')} />
-              기존 한국어 열에 덮어쓰기
-            </label>
-            <span className="text-xs text-muted">검수 화면에는 둘 다 '기존 한국어'와 'Fix'가 따로 보입니다. 내보낼 때만 다릅니다.</span>
-          </fieldset>
-        )}
+          </Card>
+        </section>
 
-        {activeStats && (
-          <div className="text-xs text-muted">
-            {activeStats.normalized}행 검수 대상 · 건너뜀 {activeStats.skipped} · 기존 한국어 {activeStats.kept}행
-          </div>
-        )}
+        <aside aria-label="정리 결과와 시작" className="flex flex-[1_1_320px] flex-col gap-3 lg:sticky lg:top-20">
+          <Card className="flex flex-col gap-4 p-4">
+            <h2 className="text-[15px] font-semibold">{sheet ? `${sheet} 시트` : '시트'}</h2>
+            {activeStats && (
+              <dl className="grid grid-cols-3 gap-2">
+                {([['검수 대상', activeStats.normalized], ['기존 한국어', activeStats.kept], ['건너뜀', activeStats.skipped]] as const).map(([k, v]) => (
+                  <div key={k} className="rounded-lg bg-canvas px-2.5 py-2">
+                    <dd className="text-lg font-bold tabular-nums">{v.toLocaleString()}</dd>
+                    <dt className="text-[11px] text-body">{k}</dt>
+                  </div>
+                ))}
+              </dl>
+            )}
 
-        {config && (
-          <div className="flex flex-wrap items-center gap-3 border-t border-line px-4 py-3 text-[13px]">
-            <label className="flex items-center gap-1.5">
-              <input type="checkbox" checked={translate} onChange={(e) => setTranslate(e.target.checked)} />
-              정규화한 뒤 한국어가 빈 행을 DeepL로 번역
-            </label>
-            {translate && (
-              <>
-                <select aria-label="번역 원문" className={`${inputClass} w-36`} value={sourceLang} onChange={(e) => setSourceLang(e.target.value as SourceLang)}>
-                  <option value="ZH">중국어 원문</option>
-                  <option value="EN" disabled={!hasEnglish}>영어 원문</option>
-                </select>
-                <span className="text-xs text-muted">
-                  {sourceLang === 'EN' ? '영어로 번역하면 단어장(중국어 기준)이 적용되지 않습니다.' : '게임 단어장을 DeepL에 같이 보냅니다. 같은 원문은 한 번만 번역합니다.'}
+            {config && finalReview && (
+              <div className="flex flex-col gap-1 text-[13px]">
+                <span className="font-semibold">수정 한국어(Fix)</span>
+                <span className="text-xs leading-relaxed text-body">
+                  기존 한국어는 원래 값으로, 수정 한국어는 지금 Fix로 들어갑니다. 내보낼 때 Fix는 수정 한국어 열에 씁니다.
                 </span>
-                <DeepLInstructionsField text={instructions.text} onChange={instructions.setText} />
-              </>
+                {finalProblem && <p className="text-xs text-orange">{finalProblem}</p>}
+              </div>
             )}
-          </div>
-        )}
 
-        {confirmRerun ? (
-          <div className="flex items-center gap-2 rounded-md border border-orange bg-orangeSoft px-3 py-2 text-xs text-ink">
-            <span>이 시트를 다시 정규화하면 수정한 번역·이력·담당·완료 체크가 모두 지워집니다.</span>
-            <Button variant="danger" onClick={() => run.mutate()} disabled={run.isPending}>
-              {run.isPending ? '정규화 중…' : '다시 정규화'}
-            </Button>
-            <Button onClick={() => setConfirmRerun(false)} disabled={run.isPending}>취소</Button>
-          </div>
-        ) : (
-          <div>
-            <Button
-              variant="primary"
-              disabled={disabled || run.isPending}
-              onClick={() => { if (alreadyNormalized) setConfirmRerun(true); else run.mutate() }}
-            >
-              {run.isPending ? '정규화 중…' : '이 시트 정규화'}
-            </Button>
-          </div>
-        )}
-      </Card>
+            {config && !finalReview && (
+              <fieldset className="flex flex-col gap-2 text-[13px]">
+                <legend className="mb-2 font-semibold">고친 한국어(Fix)를 내보낼 곳</legend>
+                <label className="flex items-center gap-2">
+                  <input type="radio" name="fix" checked={fix === 'NEW'} onChange={() => pickFix('NEW')} />
+                  새 열로 추가
+                  {fix === 'NEW' && (
+                    <input aria-label="새 열 이름" className={`${inputClass} !h-7 !w-28 !py-0 text-xs`} value={config.pairs[0]?.koHeader ?? ''}
+                      onChange={(e) => setConfig((c) => ({ ...c!, pairs: c!.pairs.map((p, i) => (i === 0 ? { ...p, koHeader: e.target.value } : p)) }))} />
+                  )}
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="radio" name="fix" checked={fix === 'OVERWRITE'} disabled={!canOverwrite(config)} onChange={() => pickFix('OVERWRITE')} />
+                  기존 한국어 열에 덮어쓰기
+                </label>
+                <span className="text-xs text-body">검수 화면에는 둘 다 기존 한국어와 Fix가 따로 보입니다.</span>
+              </fieldset>
+            )}
+
+            {config && (
+              <div className="flex flex-col gap-2 border-t border-lineSoft pt-4 text-[13px]">
+                <label className="flex items-center justify-between gap-3 font-semibold">
+                  <span>정규화한 뒤 한국어가 빈 행을 DeepL로 번역</span>
+                  <input type="checkbox" className="h-4 w-4" checked={translate} onChange={(e) => setTranslate(e.target.checked)} />
+                </label>
+                {translate && (
+                  <div className="flex flex-col gap-2">
+                    <select aria-label="번역 원문" className={`${inputClass} w-40`} value={sourceLang} onChange={(e) => setSourceLang(e.target.value as SourceLang)}>
+                      <option value="ZH">중국어 원문</option>
+                      <option value="EN" disabled={!hasEnglish}>영어 원문</option>
+                    </select>
+                    <span className="text-xs leading-relaxed text-body">
+                      {sourceLang === 'EN' ? '영어로 번역하면 단어장(중국어 기준)이 적용되지 않습니다.' : '게임 단어장을 DeepL에 같이 보냅니다. 같은 원문은 한 번만 번역합니다.'}
+                    </span>
+                    <DeepLInstructionsField text={instructions.text} onChange={instructions.setText} />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {config && (
+              <label className="flex items-start gap-2 border-t border-lineSoft pt-4 text-[13px] text-body">
+                <input type="checkbox" className="mt-0.5" checked={finalReview} onChange={(e) => pickFinal(e.target.checked)} />
+                <span>최종 리뷰 버전 <span className="block text-xs">이미 고친 한국어 열(수정 한국어)도 읽어 Fix로 넣습니다</span></span>
+              </label>
+            )}
+
+            {confirmRerun ? (
+              <div role="alert" className="flex flex-col gap-2 rounded-lg border border-orange bg-orangeSoft p-3 text-xs text-ink">
+                <span>이 시트를 다시 정규화하면 수정한 번역·이력·담당·완료 체크가 모두 지워집니다.</span>
+                <div className="flex gap-2">
+                  <Button variant="danger" onClick={() => run.mutate()} disabled={run.isPending}>
+                    {run.isPending ? '정규화 중…' : '다시 정규화'}
+                  </Button>
+                  <Button onClick={() => setConfirmRerun(false)} disabled={run.isPending}>취소</Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                variant="primary"
+                className="h-11 w-full justify-center !text-[14px] !font-semibold"
+                disabled={disabled || run.isPending}
+                onClick={() => { if (alreadyNormalized) setConfirmRerun(true); else run.mutate() }}
+              >
+                {run.isPending ? '정규화 중…' : alreadyNormalized ? '이 시트 다시 정규화' : '이 시트 정규화'}
+              </Button>
+            )}
+            {alreadyNormalized && !confirmRerun && (
+              <p className="-mt-2 text-xs text-body">이미 정규화한 시트입니다. 다시 하면 고친 번역이 지워집니다 — 검수만 하려면 위의 「검수로」.</p>
+            )}
+          </Card>
+        </aside>
+      </main>
     </div>
   )
 }

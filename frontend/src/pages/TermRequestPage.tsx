@@ -27,6 +27,8 @@ interface Draft { ko: string; keep: ReadonlySet<string> }
 const initialKo = (i: TermRequestItem) => i.finalKo ?? i.renderings[0]?.ko ?? i.existingKo ?? i.gptKo ?? ''
 /** 원문 1글자는 번역본 대조를 하지 않고 칸 전체가 같을 때만 적용한다. */
 const singleChar = (i: TermRequestItem) => [...i.src].length === 1
+/** GPT로 표기 확인 대상: 승인 안 됐고 2글자 이상이며 아직 확인 안 한 항목(서버 TermRequestService.needsFind와 같다). */
+const needsFind = (i: TermRequestItem) => i.status !== 'APPROVED' && !i.gptChecked && !singleChar(i)
 
 function mark(text: string, needle: string): ReactNode {
   if (!needle) return text
@@ -77,6 +79,22 @@ export function TermRequestPage() {
     generatedFor.current = requestId
     generate.mutate()
   }, [hasPending, requestId, generate])
+
+  // GPT로 표기 확인(2026-11-02): 버튼을 눌렀을 때만 — 용어마다 GPT가 행을 열어 보므로 시간·비용이 든다
+  const find = useMutation({
+    mutationFn: () => api.termRequests.find(requestId),
+    onSuccess: (d) => {
+      const before = new Set((qc.getQueryData<TermRequestDetail>(key)?.items ?? []).filter((i) => i.gptChecked).map((i) => i.id))
+      const fresh = new Set(d.items.filter((i) => i.gptChecked && !before.has(i.id)).map((i) => i.id))
+      qc.setQueryData<TermRequestDetail>(key, d)
+      // 표기가 바뀐 줄은 전에 고른 최종 표기·남길 표기를 버린다 — 남겨 두면 새 주 표기가 바꿀 표기가 되어 승인 때 거꾸로 고친다
+      setDrafts((prev) => new Map([...prev].filter(([id]) => !fresh.has(id))))
+      setSelected((prev) => new Set([...prev].filter((id) => !fresh.has(id))))
+      setError(null)
+      setNotice(`${fresh.size}개 확인`)
+    },
+    onError: (e) => setError(`GPT로 표기를 확인하지 못했습니다. ${e.message}`),
+  })
 
   const approve = useMutation({
     mutationFn: (items: TermApproveItem[]) => api.termRequests.approve(requestId, items),
@@ -163,6 +181,10 @@ export function TermRequestPage() {
             <option value="">전체 분류</option>
             {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>)}
           </select>
+          {/* 초안 만들기와 같은 항목을 함께 고치면 나중에 저장한 쪽이 덮으므로 겹쳐 돌리지 않는다 */}
+          <Button disabled={find.isPending || generate.isPending || !items.some(needsFind)} onClick={() => find.mutate()}>
+            {find.isPending ? '확인 중…' : 'GPT로 표기 확인'}
+          </Button>
         </div>
         {notice && <p role="status" className="mt-2 text-[13px] text-green">{notice}</p>}
         {error && <p role="alert" className="mt-2 text-[13px] text-orange">{error}</p>}
@@ -222,6 +244,8 @@ export function TermRequestPage() {
                                       {r.ko} <span className="tabular-nums text-muted">{r.rows.toLocaleString()}</span>
                                     </button>)}
                               </div>}
+                          {i.gptChecked && <span className="mt-1 block text-[11px] text-muted">GPT 확인</span>}
+                          {i.gptFindReason && <p className="mt-0.5 text-xs text-muted">{i.gptFindReason}</p>}
                         </td>
                         <td className="px-2 py-2">
                           {approved
@@ -231,7 +255,7 @@ export function TermRequestPage() {
                             : i.status === 'PENDING'
                             ? <div className="flex items-center gap-2 text-xs">
                                 <span className="text-orange">GPT 실패</span>
-                                <button type="button" disabled={generate.isPending} onClick={() => generate.mutate()} className="text-primary hover:underline disabled:opacity-50">다시 만들기</button>
+                                <button type="button" disabled={generate.isPending || find.isPending} onClick={() => generate.mutate()} className="text-primary hover:underline disabled:opacity-50">다시 만들기</button>
                               </div>
                             : <div className="flex flex-col gap-1">
                                 <div className="flex items-center gap-1.5">
@@ -242,7 +266,7 @@ export function TermRequestPage() {
                                 {failed && (
                                   <div className="flex items-center gap-2 text-xs">
                                     <span className="text-orange">GPT 실패</span>
-                                    <button type="button" disabled={generate.isPending} onClick={() => generate.mutate()} className="text-primary hover:underline disabled:opacity-50">다시 만들기</button>
+                                    <button type="button" disabled={generate.isPending || find.isPending} onClick={() => generate.mutate()} className="text-primary hover:underline disabled:opacity-50">다시 만들기</button>
                                   </div>
                                 )}
                               </div>}

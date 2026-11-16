@@ -101,6 +101,52 @@ public class QuickTranslateService {
         return new QuickTranslateResult(ko, "LLM", glossary, refs, GlossaryCheck.missing(cn, ko, glossary), PlaceholderCheck.matches(cn, ko), null);
     }
 
+    /** 여러 행 번역의 한 행 결과. problem: DeepL 태그 어긋남("TAG")·중국어 남음("HAN"), 없으면 null. */
+    public record Outcome(String ko, String problem) {}
+
+    /**
+     * 여러 행을 한 번에 번역한다(2026-11-13 여러 행 다시 번역). translate.engine 설정과 무관하게 engine을 따른다.
+     * DEEPL: translator.translate 한 번, instructions는 쓰지 않는다. basis가 EN_FIRST면 영어가 있는 행만 영어로 보낸다.
+     * GPT: llm.translateBatch 한 번 — instructions 뒤에 행들에 걸리는 단어장 메모를 붙이고, 용어집은 행들에 걸리는 것을 합친다.
+     * 메모리는 읽지도 쓰지도 않는다. 결과가 비었거나 없는 행은 맵에 넣지 않는다(키 = Item.key).
+     */
+    public Map<String, Outcome> translateMany(Game game, List<DeepLTranslator.Item> items, String basis, TranslateDtos.Engine engine, String instructions) {
+        Map<String, Outcome> out = new LinkedHashMap<>();
+        if (items.isEmpty()) return out;
+        if (engine == TranslateDtos.Engine.DEEPL) {
+            DeepLTranslator.Result r;
+            try {
+                r = translator.translate(game.getId(), items, "EN_FIRST".equals(basis) ? "EN" : "ZH");
+            } catch (IllegalStateException e) {
+                throw new IllegalArgumentException(e.getMessage());   // 키 없음 → 400
+            } catch (com.gametrans.deepl.MtException e) {
+                throw new IllegalStateException(e.getMessage());      // 단어장 만들기 실패 등 → 409와 그 이유
+            }
+            for (DeepLTranslator.Item it : items) {
+                DeepLTranslator.Outcome o = r.byKey().get(it.key());
+                if (o != null && o.ko() != null && !o.ko().isBlank()) out.put(it.key(), new Outcome(o.ko(), o.problem()));
+            }
+            return out;
+        }
+        List<GlossaryEntry> entries = effective.of(game.getId());
+        Map<String, String> withNotes = new LinkedHashMap<>();
+        java.util.Set<String> notes = new java.util.LinkedHashSet<>();
+        List<TranslateRow> rows = new java.util.ArrayList<>();
+        for (DeepLTranslator.Item it : items) {
+            Terms t = termsFor(entries, it.cn());
+            t.withNotes().forEach(withNotes::putIfAbsent);
+            notes.addAll(t.notes());
+            rows.add(new TranslateRow(it.key(), it.cn(), it.en()));
+        }
+        String fullInstructions = GlossaryPrompt.instructions(instructions, List.copyOf(notes));
+        String b = "CN_ONLY".equals(basis) ? "CN_ONLY" : "EN_FIRST";
+        java.util.Set<String> keys = new java.util.HashSet<>();
+        for (DeepLTranslator.Item it : items) keys.add(it.key());
+        for (TranslationResult r : llm.translateBatch(new TranslateBatchRequest(b, fullInstructions, withNotes, rows, List.of())))
+            if (keys.contains(r.index()) && r.ko() != null && !r.ko().isBlank()) out.putIfAbsent(r.index(), new Outcome(r.ko().trim(), null));
+        return out;
+    }
+
     /** glossary: 이 원문에 걸리는 용어(메모 뗀 번역어). withNotes: 같은 항목을 메모째(GPT용). notes: 원문에 find가 있는 단어장 메모 전용 항목의 메모. */
     public record Terms(Map<String, String> glossary, Map<String, String> withNotes, List<String> notes) {}
 
@@ -108,7 +154,11 @@ public class QuickTranslateService {
      * 게임의 유효 단어장(SRC·ko 있음) 가운데 이 원문에 실제로 걸리는 항목. 행 줄이기(RowShortenService)도 같은 용어를 쓴다.
      */
     public Terms termsFor(Game game, String cn) {
-        List<GlossaryEntry> entries = effective.of(game.getId());
+        return termsFor(effective.of(game.getId()), cn);
+    }
+
+    /** 단어장 항목을 미리 읽어 둔 쪽(여러 행 다듬기)도 쓴다. */
+    static Terms termsFor(List<GlossaryEntry> entries, String cn) {
         Map<String, String> merged = GlossaryPrompt.srcTerms(entries);
         // 겹치는 용어는 긴 쪽만 보낸다. 짧은 쪽까지 보내면 GPT가 서로 어긋나는 두 번역을 받는다
         Map<String, String> glossary = GlossaryCheck.applicable(cn, merged);

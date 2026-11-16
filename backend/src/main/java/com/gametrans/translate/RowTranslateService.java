@@ -112,6 +112,17 @@ public class RowTranslateService {
         check(s);
         // 사람이 시킨 한 행 다시 번역은 변경 내역에 RETRANSLATE로 남긴다(설계 2026-09-30 §1).
         Long activityId = activities.start(s.getProjectId(), Activity.Kind.RETRANSLATE, by, Map.of("segmentId", segmentId));
+        write(s, ko, by, author, problem, activityId);
+        events.segmentUpdated(s.getProjectId(), by, review.row(segmentId, review.defaultRatio()));
+        return workspace.row(s);
+    }
+
+    /**
+     * 번역 결과 한 행 쓰기: 판(author)을 activity에 달아 쌓고, 용어 누락을 다시 계산하고, DeepL problem이 있으면 확인 필요 + 비고.
+     * 여러 행 다시 번역(BatchTranslateService)도 같은 일을 한다. 알림은 부르는 쪽이 보낸다. 트랜잭션 안에서 부른다.
+     */
+    void write(Segment s, String ko, Long by, TranslationRevision.Author author, String problem, Long activityId) {
+        Long segmentId = s.getId();
         revisions.add(segmentId, ko, author, by, activityId);
         String miss = GlossaryCheck.format(GlossaryCheck.missing(s.getSrcText(), ko, termMiss.glossaryFor(s.getProjectId())));
         segments.updateTermMiss(segmentId, miss);
@@ -119,13 +130,11 @@ public class RowTranslateService {
         s.setTermMiss(miss);
         if (problem != null) {
             String reason = DeepLTranslator.problemNote(problem);
-            segments.updateMarks(List.of(segmentId), null, null, true, null, null);
+            segments.updateMarks(List.of(segmentId), null, null, null, true, null, null);
             String note = s.getNote() == null || s.getNote().isBlank() ? reason : s.getNote() + " · " + reason;
             segments.updateNote(segmentId, note);
             s.setNeedsCheck(true); s.setNote(note);   // 응답·알림이 새 값을 보게(updateTermMiss와 같은 사정)
         }
-        events.segmentUpdated(s.getProjectId(), by, review.row(segmentId, review.defaultRatio()));
-        return workspace.row(s);
     }
 
     private Segment find(Long segmentId) {

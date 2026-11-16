@@ -62,12 +62,14 @@ public class TermRequestService {
     private final GlossaryCategoryRepository categories;
     private final FileStorage storage;
     private final LlmClient llm;
+    private final TermFinder finder;
     private final int concurrency;
 
     public TermRequestService(TermRequestRepository requests, TermRequestItemRepository items, GameRepository games,
                               GlossaryService glossary, GlossaryEntryRepository entries, GlossaryCategoryRepository categories,
-                              FileStorage storage, LlmClient llm, @Value("${app.llm-concurrency:4}") int concurrency) {
+                              FileStorage storage, LlmClient llm, TermFinder finder, @Value("${app.llm-concurrency:4}") int concurrency) {
         this.llm = llm;
+        this.finder = finder;
         this.concurrency = Math.max(1, concurrency);
         this.requests = requests;
         this.items = items;
@@ -230,6 +232,55 @@ public class TermRequestService {
         return get(requestId);
     }
 
+    /**
+     * GPT로 표기 확인(설계 2026-11-02 §4). 승인 안 됐고 원문 2글자 이상이며 아직 확인 안 한 항목마다 TermFinder로 번역본 속 표기를
+     * 다시 찾아 renderings를 갈아 끼운다(통계 결과는 버림). 실패한 항목은 그대로 두고 확인 표시도 안 남겨 다시 부르면 다시 묻는다.
+     * 번역본에 없다고 나온 항목은 초안이 없으면 PENDING이 되고, 끝에 generate로 초안까지 만든다.
+     * generate와 같은 이유로 트랜잭션을 걸지 않고, 저장 직전에 다시 읽어 그새 승인된 항목은 두고 간다.
+     */
+    public RequestDto find(Long requestId) {
+        TermRequest request = requests.findById(requestId).orElseThrow(() -> new NotFoundException("단어장 요청을 찾을 수 없습니다: " + requestId));
+        List<TermRequestItem> wanted = items.findByRequestIdOrderBySeq(requestId).stream().filter(TermRequestService::needsFind).toList();
+        if (wanted.isEmpty()) return get(requestId);
+
+        GlossaryVariants.Pairs pairs = GlossaryVariants.pairs(glossary.rowsOf(request.getGameId()));
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(concurrency, wanted.size()));
+        Map<Long, TermFinder.Found> found = new HashMap<>();
+        try {
+            List<CompletableFuture<TermFinder.Found>> futures = wanted.stream()
+                    .map(i -> CompletableFuture.supplyAsync(() -> finder.find(i.getSrc(), i.getCategory(), pairs), pool)).toList();
+            for (int k = 0; k < wanted.size(); k++) {
+                TermFinder.Found f = futures.get(k).join();
+                if (f != null) found.put(wanted.get(k).getId(), f);
+            }
+        } finally {
+            pool.shutdown();
+        }
+
+        List<TermRequestItem> fresh = items.findAllById(found.keySet()).stream().filter(TermRequestService::needsFind).toList();
+        boolean pending = false;
+        for (TermRequestItem i : fresh) {
+            TermFinder.Found f = found.get(i.getId());
+            i.setGptChecked(true);
+            i.setGptFindReason(f.reason());
+            i.setRenderings(new ArrayList<>(f.renderings()));
+            if (!f.renderings().isEmpty()) {
+                i.setSource(TermRequestItem.CORPUS);
+                i.setStatus(TermRequestItem.READY);
+            } else {
+                i.setSource(TermRequestItem.GPT);
+                i.setStatus(i.getGptKo() == null ? TermRequestItem.PENDING : TermRequestItem.READY);
+                pending |= i.getGptKo() == null;
+            }
+        }
+        items.saveAll(fresh);
+        return pending ? generate(requestId) : get(requestId);
+    }
+
+    private static boolean needsFind(TermRequestItem i) {
+        return !TermRequestItem.APPROVED.equals(i.getStatus()) && !i.isGptChecked() && i.getSrc().codePointCount(0, i.getSrc().length()) >= 2;
+    }
+
     private static boolean needsDraft(TermRequestItem i) {
         return TermRequestItem.PENDING.equals(i.getStatus()) || TermRequestItem.FAILED.equals(i.getStatus());
     }
@@ -280,7 +331,8 @@ public class TermRequestService {
         List<ItemDto> out = its.stream().map(i -> {
             GlossaryEntry e = existing.get(i.getSrc());
             return new ItemDto(i.getId(), i.getSeq(), i.getCategory(), i.getSrc(), i.getRenderings(), i.getSource(), i.getGptKo(),
-                    i.getGptReason(), i.getStatus(), i.getFinalKo(), e == null ? null : e.getKo(), e == null ? null : e.getNote());
+                    i.getGptReason(), i.getStatus(), i.getFinalKo(), e == null ? null : e.getKo(), e == null ? null : e.getNote(),
+                    i.isGptChecked(), i.getGptFindReason());
         }).toList();
         return new RequestDto(req.getId(), req.getGameId(), req.getFileName(), req.getCreatedAt(), out);
     }

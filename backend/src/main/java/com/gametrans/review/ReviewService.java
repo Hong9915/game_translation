@@ -154,6 +154,19 @@ public class ReviewService {
             if (made[0] == null) made[0] = activities.start(s.getProjectId(), Activity.Kind.EDIT, by, Map.of("segmentId", segmentId));
             return made[0];
         };
+        int propagated = saveHuman(s, trimmed, by, activityFor);
+        SegmentRow saved = row(segmentId, ratio);
+        events.segmentUpdated(s.getProjectId(), by, saved);
+        return new ReviewDtos.SaveResult(saved, propagated, made[0]);
+    }
+
+    /**
+     * 판 쓰기·메모리·용어 누락 재검사·같은 원문 전파까지(이벤트·응답 행은 부르는 쪽 몫). 전파된 행 수를 돌려준다.
+     * 판이 하나라도 써질 때만 activityFor가 변경 내역을 만든다. 여러 행을 한 번에 저장하는 쪽(GPT 다듬기 PolishService)도 쓴다 —
+     * 부르는 쪽이 트랜잭션을 열고 text를 trim해 넘긴다.
+     */
+    public int saveHuman(Segment s, String trimmed, Long by, Function<Long, Long> activityFor) {
+        Long segmentId = s.getId();
         Optional<TranslationRevision> current = revisions.current(segmentId);
         if (current.isEmpty() || !current.get().getText().equals(trimmed)) {
             revisions.add(segmentId, trimmed, TranslationRevision.Author.HUMAN, by, activityFor.apply(s.getProjectId()));
@@ -167,10 +180,7 @@ public class ReviewService {
         // 들고 있는 s는 1차 캐시에 그대로 남아 아래 row()가 이 s를 다시 돌려준다. 방금 쓴 값을 직접 반영해
         // row()가 벌크 update 이전의 term_miss를 읽어 오지 않게 한다.
         s.setTermMiss(termMiss);
-        int propagated = duplicates.syncFrom(s, trimmed, by, activityFor);
-        SegmentRow saved = row(segmentId, ratio);
-        events.segmentUpdated(s.getProjectId(), by, saved);
-        return new ReviewDtos.SaveResult(saved, propagated);
+        return duplicates.syncFrom(s, trimmed, by, activityFor);
     }
 
     /** sheet가 null이 아니면 그 시트의 플래그 행만 다듬는다 — 시트 탭을 보고 누른 버튼이 남의 시트까지 GPT로 보내지 않도록. */

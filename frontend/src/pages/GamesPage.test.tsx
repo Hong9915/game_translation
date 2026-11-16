@@ -44,6 +44,7 @@ describe('GamesPage', () => {
     ])
     renderWithProviders(<GamesPage />)
     await screen.findByRole('link', { name: /드래곤 레이드/ })
+    await userEvent.click(screen.getByRole('button', { name: '+ 새 게임' }))
     await userEvent.type(screen.getByLabelText('새 게임 이름'), '드래곤 레이드')
     await userEvent.click(screen.getByRole('button', { name: '게임 만들기' }))
     expect(await screen.findByText('이미 있는 게임 이름입니다: 드래곤 레이드')).toBeInTheDocument()
@@ -73,7 +74,7 @@ describe('GamesPage', () => {
   it('stays quiet when the usage request fails', async () => {
     mockFetch([{ path: '/games', body: [] }, { path: '/usage', status: 500, body: { message: 'nope' } }])
     renderWithProviders(<GamesPage />)
-    expect(await screen.findByRole('heading', { name: '게임 선택' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '게임' })).toBeInTheDocument()
     expect(screen.queryByText(/누적 GPT 비용/)).not.toBeInTheDocument()
   })
 })

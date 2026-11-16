@@ -8,10 +8,10 @@ import { WorkspaceGrid } from './WorkspaceGrid'
 /** 행 숨기기·행 높이·열 너비(2026-10-12). 화면에만 걸리고 이 브라우저에 기억한다. */
 const row = (i: number, over: Partial<WorkspaceRow> = {}): WorkspaceRow => ({
   id: 100 + i, rowNo: i + 2, pairIndex: 0, indexLabel: `UI!${i + 2}`, keyText: `UI_${i}`, src: `源${i}`, en: `Chaos${i}`, existingKo: null, fix: `한${i}`,
-  changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, needsCheck: false, confirmed: false, finalReview: false, finalMark: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0, ...over,
+  changed: false, termMiss: [], josaHints: [], assignee: null, review1: false, review2: false, review3: false, needsCheck: false, confirmed: false, finalReview: false, finalMark: false, note: null, lastEditor: null, lastEditedAt: null, history: [], dupCount: 0, ...over,
 })
 function renderGrid(rows: (WorkspaceRow | undefined)[], over: Partial<ComponentProps<typeof WorkspaceGrid>> = {}) {
-  const props = { rows, ratio: 1, busy: new Set<number>(), highlighted: new Set<number>(), failedText: new Map<number, { text: string; base: string }>(), onSave: vi.fn(), onMarks: vi.fn(), onBulkMarks: vi.fn(), viewCount: rows.length, onVisibleRange: vi.fn(), onFilterDuplicates: vi.fn(), onAddToGlossary: vi.fn(), onTranslate: vi.fn(), onShorten: vi.fn(), onJosaApply: vi.fn(), onJosaIgnore: vi.fn(), onHistory: vi.fn(() => Promise.resolve([])), translating: new Set<number>(), ...over }
+  const props = { rows, ratio: 1, busy: new Set<number>(), highlighted: new Set<number>(), failedText: new Map<number, { text: string; base: string }>(), onSave: vi.fn(), onMarks: vi.fn(), onBulkMarks: vi.fn(), viewCount: rows.length, onVisibleRange: vi.fn(), onFilterDuplicates: vi.fn(), onAddToGlossary: vi.fn(), onTranslate: vi.fn(), onShorten: vi.fn(), onJosaApply: vi.fn(), onJosaIgnore: vi.fn(), onHistory: vi.fn(() => Promise.resolve([])), translating: new Set<number>(), onSaveMany: vi.fn(), onUndo: vi.fn(), onRedo: vi.fn(), onCopyAllFix: vi.fn(), onRangeAction: vi.fn(), onNotice: vi.fn(), ...over }
   const utils = render(<WorkspaceGrid {...props} />)
   return { ...utils, props }
 }
@@ -69,6 +69,35 @@ describe('열 숨기기', () => {
     expect(region()).toHaveTextContent('2행 · 간체 원문')
     fireEvent.keyDown(grid, { key: 'ArrowRight' })
     expect(region()).toHaveTextContent('2행 · 수정 한국어 (Fix)')
+  })
+})
+
+describe('입력줄 높이', () => {
+  const barHeight = () => screen.getByRole('region', { name: '선택한 칸 내용' }).style.height
+  it('입력줄 아래 경계를 끌면 높아지고(새로 열어도 기억), 더블클릭하면 원래대로', () => {
+    const first = renderGrid(rowsOf(2))
+    expect(barHeight()).toBe('70px')
+    const handle = screen.getByRole('separator', { name: '입력줄 높이 조절' })
+    fireEvent.mouseDown(handle, { clientY: 100 })
+    fireEvent.mouseMove(window, { clientY: 230 })
+    fireEvent.mouseUp(window, { clientY: 230 })
+    expect(barHeight()).toBe('200px')
+    first.unmount()
+
+    renderGrid(rowsOf(2))
+    expect(barHeight()).toBe('200px')
+    fireEvent.doubleClick(screen.getByRole('separator', { name: '입력줄 높이 조절' }))
+    expect(barHeight()).toBe('70px')
+  })
+  it('기본보다 낮게, 600px보다 높게는 안 된다', () => {
+    renderGrid(rowsOf(2))
+    const handle = screen.getByRole('separator', { name: '입력줄 높이 조절' })
+    fireEvent.mouseDown(handle, { clientY: 100 })
+    fireEvent.mouseUp(window, { clientY: 20 })
+    expect(barHeight()).toBe('70px')
+    fireEvent.mouseDown(handle, { clientY: 100 })
+    fireEvent.mouseUp(window, { clientY: 2000 })
+    expect(barHeight()).toBe('600px')
   })
 })
 
