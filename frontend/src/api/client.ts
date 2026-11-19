@@ -1,4 +1,5 @@
 import type {
+  ApproveCandidateResult, GlossaryCandidate,
   BatchTranslateResult, TranslateEngine, PolishResult, SaveBatchItem, SaveBatchResult,
   AssignRequest, ExportPreview, Game, GameMemo, NormalizeRequest, NormalizeResponse, PresenceEntry, Project,
   MarkKey, MarksPatch, QuickTranslateRequest, QuickTranslateResult, ReviewerRef, RowFilter, RowShortenResult, SearchIn, WorkspaceRow, WorkspaceRowsResponse, WorkspaceSummary,
@@ -6,6 +7,7 @@ import type {
   GlossaryEntry, GlossaryPhraseCategory, GlossaryRecommendation, GlossaryRequest, GlossarySaveResult, GlossarySuggestResult, GlossaryVariant, GlossaryUnifyRequest, GlossarySpacingItem, TagSpacingItem, TagSpacingRow, CommandPlan, OpSpec, CommandPreset, RowHistoryEntry,
   TermApproveItem, TermApproveResult, TermRequestDetail, TermRequestSummary,
   CorrectionRule, RuleList, RulePreview, RulePreviewRow, RuleApplyRequest, RuleApplyResult,
+  ProposalDetail, ProposalSummary,
   ActivityFeedResponse, ActivityRevertResult, ActivityRowsResponse, JosaKind, JosaPreview, JobDto, TranslateStartRequest,
 } from './types'
 import { loadReviewer } from '../lib/reviewer'
@@ -162,6 +164,13 @@ export const api = {
     // 검토자를 지운다. transferTo를 주면 그 사람의 담당·완료·수정 기록을 옮기고, 없으면 비운다.
     remove: (id: number, transferTo?: number) => request<void>(`/reviewers/${id}${qs({ transferTo })}`, { method: 'DELETE' }),
   },
+  // Claude 제안. 저장·넣지 않음은 서버가 헤더 X-Reviewer-Id가 제안의 검수자와 같은지 본다. 이미 처리·만료면 409({message, proposal}).
+  proposals: {
+    list: (gameId: number, reviewerId: number) => request<ProposalSummary[]>(`/connector/proposals${qs({ reviewerId, gameId })}`),
+    get: (id: number) => request<ProposalDetail>(`/connector/proposals/${id}`),
+    apply: (id: number, segmentIds: number[]) => request<ProposalDetail>(`/connector/proposals/${id}/apply`, { method: 'POST', ...json({ segmentIds }) }),
+    dismiss: (id: number) => request<ProposalDetail>(`/connector/proposals/${id}/dismiss`, { method: 'POST' }),
+  },
   assign: (id: number, req: AssignRequest) => request<{ updated: number }>(`/projects/${id}/assign`, { method: 'POST', ...json(req) }),
   // 검수 그리드의 행 하나를 GPT로 번역해 그 행의 최신 한국어(Fix)로 쌓는다. 같은 원문 행에는 퍼지지 않는다(사람이 저장할 때 퍼진다).
   // 행 하나를 DeepL로 번역한다. 원문 언어는 서버가 그 파일에서 마지막으로 고른 값을 쓴다.
@@ -284,6 +293,11 @@ export const api = {
     // Ctrl+Z·Ctrl+Y: 준 변경 내역들을 최신 것부터 되돌린다. 돌아온 activityIds를 다시 넘기면 다시 실행이 된다.
     undo: (activityIds: number[]) =>
       request<{ reverted: number; skipped: number; activityIds: number[] }>('/activity/undo', { method: 'POST', ...json({ activityIds }) }),
+  },
+  glossaryCandidates: {
+    list: (gameId: number) => request<GlossaryCandidate[]>(`/games/${gameId}/glossary/candidates`),
+    approve: (id: number) => request<ApproveCandidateResult>(`/glossary/candidates/${id}/approve`, { method: 'POST' }),
+    dismiss: (id: number) => request<GlossaryCandidate>(`/glossary/candidates/${id}/dismiss`, { method: 'POST' }),
   },
   glossary: {
     list: (gameId: number, scope: 'GAME' | 'SHARED' | 'ALL') =>

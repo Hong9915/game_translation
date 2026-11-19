@@ -15,6 +15,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Component
 public class ReviewEvents {
     public static final String EVENT = "review";
+    /** Claude 제안 알림 전용 이름. 옛 프런트(review만 구독)가 payload 모양을 몰라 죽지 않도록 따로 보낸다. */
+    public static final String PROPOSAL_EVENT = "proposal";
+
+    /** 단어장 후보(승인 대기) 알림 전용 이름 — review 이벤트에 새 type을 싣지 않는다(옛 탭 보호). */
+    public static final String GLOSSARY_CANDIDATE_EVENT = "glossary-candidate";
 
     /** by: 행동한 검토자 id. 익명이거나 GPT 작업이면 null. */
     public record SegmentUpdated(String type, Long by, SegmentRow row) {}
@@ -28,6 +33,10 @@ public class ReviewEvents {
     public record Refresh(String type, Long by) {}
     /** 단어장 항목이 바뀌었다: 열린 단어장 패널이 목록을 다시 읽으라는 신호. 행이 안 바뀌어도 보낸다. */
     public record GlossaryChanged(String type, Long by) {}
+    /** Claude 제안이 만들어지거나(connector-proposal) 처리됐다(connector-proposal-decided): 창·칩이 목록을 다시 읽으라는 신호. */
+    public record ProposalEvent(String type, Long proposalId, Long reviewerId, Long gameId, String status) {}
+    /** 후보가 생기거나 처리됐다: 후보 목록·배지를 다시 읽으라는 신호. type은 항상 "glossary-candidate", status는 후보의 새 상태. */
+    public record CandidateEvent(String type, Long gameId, Long candidateId, String status) {}
     public record PresenceEntry(Long id, String name, String color, String sheet, Long editingSegmentId) {}
     public record PresenceSnapshot(String type, List<PresenceEntry> reviewers) {}
 
@@ -55,6 +64,21 @@ public class ReviewEvents {
 
     public void glossaryChanged(Long projectId, Long by) { send(projectId, new GlossaryChanged("glossary", by)); }
 
+    /** 게임 스트림(구독자가 있든 없든)과 게임의 각 파일 스트림에 보낸다. 트랜잭션 안이면 커밋 뒤에. */
+    public void proposal(Long gameId, java.util.Collection<Long> projectIds, ProposalEvent payload) {
+        afterCommit(() -> {
+            bus.publishGameEvent(gameId, PROPOSAL_EVENT, payload);
+            for (Long pid : projectIds) bus.publishProjectEvent(pid, PROPOSAL_EVENT, payload);
+        });
+    }
+
+    public void glossaryCandidate(Long gameId, java.util.Collection<Long> projectIds, CandidateEvent payload) {
+        afterCommit(() -> {
+            bus.publishGameEvent(gameId, GLOSSARY_CANDIDATE_EVENT, payload);
+            for (Long pid : projectIds) bus.publishProjectEvent(pid, GLOSSARY_CANDIDATE_EVENT, payload);
+        });
+    }
+
     /** room이 음수면 게임 화면 방(PresenceService.gameRoom) — 게임 스트림으로만 보낸다. */
     public void presence(Long room, List<PresenceEntry> reviewers) {
         PresenceSnapshot payload = new PresenceSnapshot("presence", reviewers);
@@ -69,6 +93,10 @@ public class ReviewEvents {
             bus.publishProjectEvent(projectId, EVENT, payload);
             if (gameId != null) bus.publishGameEvent(gameId, EVENT, payload);
         };
+        afterCommit(publish);
+    }
+
+    private static void afterCommit(Runnable publish) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override public void afterCommit() { publish.run(); }

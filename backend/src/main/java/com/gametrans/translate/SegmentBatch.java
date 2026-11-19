@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
  * 1~max행이어야 하고(아니면 400), 없는 행은 404, 여러 게임에 걸치면 400.
  */
 @Component
-class SegmentBatch {
+public class SegmentBatch {
     private final SegmentRepository segments;
     private final ProjectRepository projects;
     private final GameService games;
@@ -32,10 +32,10 @@ class SegmentBatch {
     }
 
     /** ids: 중복·null을 뺀 요청 순서. */
-    record Loaded(List<Long> ids, Map<Long, Segment> byId, Map<Long, Project> projectOf, Game game) {}
+    public record Loaded(List<Long> ids, Map<Long, Segment> byId, Map<Long, Project> projectOf, Game game) {}
 
     /** verb: 메시지에 들어갈 말("번역할", "다듬을", "넣을"). */
-    Loaded load(List<Long> requested, int max, String verb) {
+    public Loaded load(List<Long> requested, int max, String verb) {
         List<Long> ids = requested == null ? List.of() : requested.stream().filter(Objects::nonNull).distinct().toList();
         if (ids.isEmpty() || ids.size() > max) throw new IllegalArgumentException("한 번에 1~" + max + "행을 " + verb + " 수 있습니다.");
         Map<Long, Segment> byId = new HashMap<>();
@@ -53,7 +53,7 @@ class SegmentBatch {
     }
 
     /** 확정·제외 행은 일괄 작업에서 뺀다. 뺄 이유, 없으면 null. */
-    static String lockedReason(Segment s) {
+    public static String lockedReason(Segment s) {
         if (s.isConfirmed()) return "확정";
         if (s.isSkipped()) return "제외";
         return null;

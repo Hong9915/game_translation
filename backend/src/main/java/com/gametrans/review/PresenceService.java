@@ -112,6 +112,12 @@ public class PresenceService {
     @Scheduled(fixedDelay = 10_000)
     void expireNow() { expire(Instant.now()); }
 
+    /** 그 방(프로젝트 id, 또는 gameRoom)에 그 검수자가 지금 있는가. */
+    public boolean isPresent(Long room, Long reviewerId) {
+        Map<Long, Seen> seen = byProject.get(room);
+        return seen != null && seen.containsKey(reviewerId);
+    }
+
     public List<PresenceEntry> snapshot(Long projectId) {
         Map<Long, Seen> seen = byProject.get(projectId);
         if (seen == null) return List.of();

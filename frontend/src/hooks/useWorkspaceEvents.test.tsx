@@ -51,6 +51,22 @@ describe('useWorkspaceEvents', () => {
     expect(result.current.highlighted.has(3)).toBe(false)
   })
 
+  it('ignoresUnknownEventTypes', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const { qc, wrapper } = setup()
+    const before = qc.getQueryData(key)
+    const { result } = renderHook(() => useWorkspaceEvents(5, me), { wrapper })
+    const es = FakeEventSource.instances[0]
+    // segmentIds·by·row가 없는 낯선 type이 와도 죽지 않는다
+    expect(() => act(() => es.emit('review', { type: 'something-new' }))).not.toThrow()
+    expect(() => act(() => es.emit('review', { type: 'connector-proposal', proposalId: 9, reviewerId: 1, gameId: 3, status: 'PENDING' }))).not.toThrow()
+    act(() => { vi.advanceTimersByTime(1000) })
+    expect(qc.getQueryData(key)).toBe(before)
+    expect(result.current.highlighted.size).toBe(0)
+    expect(qc.getQueryState(summaryKey)?.isInvalidated).toBe(false)
+  })
+
   it('does not highlight my own change and tracks presence without me', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     const { wrapper } = setup()

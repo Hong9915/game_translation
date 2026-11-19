@@ -11,6 +11,7 @@ import { JosaApplyDialog } from '../components/workspace/JosaApplyDialog'
 import { TranslateRowDialog } from '../components/workspace/TranslateRowDialog'
 import { BatchTranslateDialog } from '../components/workspace/BatchTranslateDialog'
 import { PolishDialog } from '../components/workspace/PolishDialog'
+import { ProposalDialog } from '../components/workspace/ProposalDialog'
 import { CommandFixDialog } from '../components/workspace/CommandFixDialog'
 import { ExportModeDialog } from '../components/workspace/ExportModeDialog'
 import { GameZipExportDialog, type ZipFile } from '../components/workspace/GameZipExportDialog'
@@ -27,6 +28,8 @@ import { WorkspaceGrid, type GridPosition } from '../components/workspace/Worksp
 import { loadRowHeight } from '../lib/gridLayout'
 import { columnClipboard } from '../lib/gridRange'
 import { type UndoState, type UndoUnit, emptyUndo, insertPast, popFuture, popPast, pushUnit, toFuture } from '../lib/undoStack'
+import { useGlossaryCandidates } from '../hooks/useGlossaryCandidates'
+import { useConnectorProposals } from '../hooks/useConnectorProposals'
 import { useLinger } from '../hooks/useLinger'
 import { usePresence } from '../hooks/usePresence'
 import { useReviewer } from '../hooks/useReviewer'
@@ -77,12 +80,14 @@ export function WorkspacePage() {
   const game = useQuery({ queryKey: ['game', gameId], queryFn: () => api.games.get(gameId as number), enabled: isGame }).data
   const { reviewer, setName } = useReviewer()
   const [renaming, setRenaming] = useState(false)
+  const proposals = useConnectorProposals(screen, isGame ? gameId : project?.gameId ?? null, reviewer)
   // 오른쪽 패널은 하나만 연다(설계 2026-09-30 §4.2) — 둘 다 380px이라 같이 열면 그리드가 너무 좁아진다.
   const [sidePanel, setSidePanel] = useState<'glossary' | 'activity' | null>(null)
   const glossaryOpen = sidePanel === 'glossary'
   const activityOpen = sidePanel === 'activity'
   // 닫을 때 폭 전환(PANEL_MS)이 끝날 때까지 패널을 남겨 둔다. seq는 다시 열 때 새로 마운트하는 key — 남아 있던 옛 폼이 보이지 않게.
   const { shown: shownPanel, seq: panelSeq } = useLinger(sidePanel, PANEL_MS)
+  const glossaryCandidates = useGlossaryCandidates(screen, isGame ? gameId : project?.gameId ?? null)
   const [glossaryInitial, setGlossaryInitial] = useState<GlossaryPanelProps['initial']>(undefined)
   const [sheet, setSheet] = useState<string | null>(null)
   const [filter, setFilter] = useState<RowFilter>('ALL')
@@ -166,6 +171,7 @@ export function WorkspacePage() {
   if (undoScopeRef.current !== undoScope) { undoScopeRef.current = undoScope; undoRef.current = emptyUndo }
   // 쌓은 횟수 — 되돌리기 요청 중에 새로 쌓였는지 본다
   const undoGen = useRef(0)
+  const proposalScope = useRef<{ id: number; scope: string } | null>(null)
   const undoBusy = useRef(false)
   const copyBusy = useRef(false)
   const summary = useQuery({
@@ -612,12 +618,20 @@ export function WorkspacePage() {
     return [...seen.values()]
   }, [rows])
 
+  // 다른 창이 열려 있으면 제안 창은 기다린다 — 창마다 window에서 Esc를 받아 한 번에 둘 다 닫히고(다듬기 결과·번역 중단) 만다.
+  // 막대의 칩은 그대로 개수를 보이고, 다른 창이 닫히면 뜬다.
+  const otherDialogOpen = translateAsk !== null || batchAsk !== null || polishAsk !== null || (josaDialog !== null && target !== null)
+    || commandFix !== null || zipOpen || exportAsk !== null
+  const proposalVisible = proposals.current != null && proposals.position != null && !!reviewer && !renaming && !otherDialogOpen
+  // 되돌리기 단위는 창이 처음 뜬 때의 범위에 쌓는다(다듬기·번역 창과 같다) — 그 사이 시트를 옮겨도 엉뚱한 스택에 안 쌓인다.
+  if (!proposalVisible) proposalScope.current = null   // 다시 뜰 때마다 그때의 범위를 잡는다
+  else if (proposalScope.current?.id !== proposals.current) proposalScope.current = { id: proposals.current as number, scope: undoScopeRef.current }
   return (
     <div className="flex h-screen flex-col bg-white">
       <TopBar fileName={isGame ? '게임 전체 리뷰' : project?.fileName ?? ''} gameName={isGame ? game?.name ?? '' : project?.gameName ?? ''}
         gameId={isGame ? gameId : project?.gameId ?? 0} projectId={isGame ? undefined : id} reviewer={reviewer}
         presence={presence} status={status} exporting={exportXlsx.isPending} glossaryOpen={glossaryOpen} activityOpen={activityOpen}
-        onRename={() => setRenaming(true)} onExport={() => (isGame ? setZipOpen(true) : exportXlsx.mutate({}))}
+        glossaryPending={glossaryCandidates.list.length} proposalCount={proposals.pending.length} onOpenProposals={proposals.openAll} onRename={() => setRenaming(true)} onExport={() => (isGame ? setZipOpen(true) : exportXlsx.mutate({}))}
         onToggleGlossary={toggleGlossary} onToggleActivity={toggleActivity}
         exportLabel={isGame ? '이 시트 내보내기' : undefined} />
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -700,6 +714,21 @@ export function WorkspacePage() {
             refreshRows()
           }}
           onClose={() => setPolishAsk(null)} />
+      )}
+      {/* 이름 모달·다른 창이 열려 있으면 띄우지 않고, 검수자가 바뀌면 key로 새로 단다 — 남의 제안이 보이면 안 된다 */}
+      {proposalVisible && proposals.current != null && proposals.position != null && reviewer && (
+        <ProposalDialog key={`${reviewer.id}:${proposals.current}`} proposalId={proposals.current} position={proposals.position}
+          onSaved={(r) => {
+            const id = proposals.current as number
+            pushUndo(`Claude 제안 ${r.saved}행`, r.activityIds, proposalScope.current?.id === id ? proposalScope.current.scope : undefined)
+            const why = [...new Set(r.skippedRows.map((s) => s.reason))].join('·')
+            notify(`Claude 제안 ${r.saved}행 저장${r.skippedRows.length > 0 ? ` · 건너뜀 ${r.skippedRows.length}행(${why})` : ''}${r.propagated > 0 ? ` · 같은 원문 ${r.propagated}행도 바뀜` : ''}`)
+            refreshRows()
+            proposals.decided(id)
+          }}
+          onDismissed={() => { notify('Claude 제안을 넣지 않았습니다'); proposals.decided(proposals.current as number) }}
+          onGone={(msg) => { notify(msg); proposals.decided(proposals.current as number) }}
+          onLater={proposals.later} />
       )}
       {josaDialog && target !== null && (
         <JosaApplyDialog x={josaDialog.x} y={josaDialog.y} target={target}

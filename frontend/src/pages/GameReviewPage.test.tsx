@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api/client'
 import { resetCommandRuns, startCommandRun } from '../components/workspace/command/commandRuns'
+import { resetDeferredForTests } from '../hooks/useConnectorProposals'
 import { mockFetch } from '../test/mockFetch'
 import { renderWithProviders } from '../test/render'
 import { WorkspacePage } from './WorkspacePage'
@@ -37,7 +38,7 @@ beforeEach(() => {
   localStorage.setItem('gametrans.reviewer', JSON.stringify(me))
   localStorage.setItem('gametrans.workspaceViewSize', 'all')
 })
-afterEach(() => { FakeEventSource.instances = []; localStorage.removeItem('gametrans.workspaceViewSize'); resetCommandRuns(); vi.restoreAllMocks() })
+afterEach(() => { FakeEventSource.instances = []; localStorage.removeItem('gametrans.workspaceViewSize'); resetCommandRuns(); resetDeferredForTests(); vi.restoreAllMocks() })
 
 const routes = () => [
   { path: '/games/3/review/rows/summary', body: summary },
@@ -178,5 +179,19 @@ describe('게임 전체 리뷰 화면', () => {
     await waitFor(() => expect(calls.some((c) => c.url.includes('/review/rows?sheets=21'))).toBe(true))
     // 섞인 범위(21과 31을 함께)는 한 번도 보내지 않는다
     expect(calls.some((c) => /sheets=[^&]*21[^&]*31|sheets=[^&]*31[^&]*21/.test(decodeURIComponent(c.url)))).toBe(false)
+  })
+
+  it('opensPendingProposalOnGameScreen', async () => {
+    const detail = { id: 5, reviewerId: 1, gameId: 3, title: '다듬기', status: 'PENDING', createdAt: '2026-11-17T00:00:00Z', decidedAt: null,
+      rows: [{ segmentId: 10, projectId: 1, fileName: '삼국_텍스트.xlsx', sheet: 'Skill', rowNo: 2, indexLabel: null, src: '源', fix: '한', base: '한', text: '새', reason: null, finalReview: false, lockedReason: null }], result: null }
+    const { calls } = mockFetch([
+      { path: '/connector/proposals?', body: [{ id: 5, title: '다듬기', rowCount: 1, createdAt: '2026-11-17T00:00:00Z' }] },
+      { path: '/connector/proposals/5', body: detail },
+      ...routes()])
+    render()
+    expect(await screen.findByRole('heading', { name: 'Claude가 고칠 안 — 다듬기 (1행)' })).toBeInTheDocument()
+    const list = calls.find((c) => c.url.includes('/connector/proposals?'))
+    expect(list?.url).toContain('gameId=3')
+    expect(list?.url).toContain('reviewerId=1')
   })
 })

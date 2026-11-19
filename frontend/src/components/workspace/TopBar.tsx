@@ -10,12 +10,14 @@ interface TopBarProps {
   reviewer: ReviewerRef | null; presence: PresenceEntry[]; status: ConnStatus
   exporting: boolean; glossaryOpen: boolean; activityOpen: boolean; onRename: () => void; onExport: () => void; onToggleGlossary: () => void
   onToggleActivity: () => void
+  /** 내 Claude 제안이 몇 건 기다리는지. 0이거나 없으면 칩을 보이지 않는다. */
+  glossaryPending?: number; proposalCount?: number; onOpenProposals?: () => void
   /** 내보내기 버튼 글·막기·설명. 게임 화면의 "이 시트 내보내기"는 이 시트만 / 전체 파일 zip을 고르는 창을 연다. */
   exportLabel?: string; exportDisabled?: boolean; exportTitle?: string
 }
 
 export function TopBar({ fileName, gameName, gameId, projectId, reviewer, presence, status, exporting, glossaryOpen, activityOpen, onRename, onExport, onToggleGlossary, onToggleActivity,
-  exportLabel = '내보내기', exportDisabled = false, exportTitle }: TopBarProps) {
+  glossaryPending = 0, proposalCount = 0, onOpenProposals, exportLabel = '내보내기', exportDisabled = false, exportTitle }: TopBarProps) {
   return (
     <div className="flex items-center gap-3 whitespace-nowrap border-b border-line bg-white px-3 py-1.5">
       <Link to={`/games/${gameId}`} className="text-xs text-muted hover:underline">{gameName}</Link>
@@ -35,9 +37,13 @@ export function TopBar({ fileName, gameName, gameId, projectId, reviewer, presen
         </button>
       )}
       {/* 게임마다 창 이름이 같아서 다시 눌러도 창이 늘지 않고 열려 있던 창으로 간다. gameId 0은 아직 불러오는 중. */}
+      {proposalCount > 0 && <Button variant="purple" title="Claude가 보낸 고칠 안 보기" onClick={onOpenProposals}>Claude 제안 {proposalCount}</Button>}
       <Button disabled={gameId === 0} title="새 창으로 메모 열기" onClick={() => window.open(`/games/${gameId}/memo`, `memo-${gameId}`, 'popup,width=720,height=820')?.focus()}>메모</Button>
       <Button disabled={gameId === 0} title="손 수정에서 배운 교정 규칙을 새 탭에서 보기" onClick={() => window.open(`/games/${gameId}/rules`, `rules-${gameId}`)?.focus()}>교정 규칙</Button>
-      <Button variant={glossaryOpen ? 'purple' : 'secondary'} onClick={onToggleGlossary}>단어장</Button>
+      <Button variant={glossaryOpen ? 'purple' : 'secondary'} onClick={onToggleGlossary}>
+        단어장
+        {glossaryPending > 0 && <span aria-label={`승인 대기 ${glossaryPending}`} className="ml-1 rounded-full bg-primary px-1.5 text-[11px] font-semibold leading-4 text-white">{glossaryPending}</span>}
+      </Button>
       <Button variant={activityOpen ? 'purple' : 'secondary'} onClick={onToggleActivity}>변경 내역</Button>
       <Button variant="primary" onClick={onExport} disabled={exporting || exportDisabled} title={exportTitle}>{exporting ? '만드는 중…' : exportLabel}</Button>
     </div>

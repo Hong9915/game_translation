@@ -24,8 +24,8 @@ import org.hibernate.type.SqlTypes;
 @Table(name = "activity")
 @Getter @Setter @NoArgsConstructor
 public class Activity {
-    /** EDIT·RETRANSLATE는 detail.segmentId, FIX_TERMS·SHORTEN은 detail.sheet(없으면 전체), GLOSSARY_EDIT은 action·kind·find·ko·oldKo, REVERT는 detail.revertOf(되돌린 항목 id). */
-    public enum Kind { EDIT, RETRANSLATE, FIX_TERMS, SHORTEN, GLOSSARY_APPLY, GLOSSARY_EDIT, REVERT, JOSA_FIX, TAG_SPACING, COMMAND_FIX, POLISH, RULE_APPLY }
+    /** EDIT·RETRANSLATE는 detail.segmentId, FIX_TERMS·SHORTEN은 detail.sheet(없으면 전체), GLOSSARY_EDIT은 action·kind·find·ko·oldKo, REVERT는 detail.revertOf(되돌린 항목 id), CONNECTOR는 Claude in Chrome이 넣은 저장(detail.finalMarked = 이번에 새로 켠 최종 수정 행 id). */
+    public enum Kind { EDIT, RETRANSLATE, FIX_TERMS, SHORTEN, GLOSSARY_APPLY, GLOSSARY_EDIT, REVERT, JOSA_FIX, TAG_SPACING, COMMAND_FIX, POLISH, RULE_APPLY, CONNECTOR }
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ApiError, api } from '../../api/client'
-import type { GlossaryEntry, GlossaryKind, GlossaryMatchMode, GlossaryRequest, GlossarySuggestResult } from '../../api/types'
+import type { GlossaryCandidate, GlossaryEntry, GlossaryKind, GlossaryMatchMode, GlossaryRequest, GlossarySuggestResult } from '../../api/types'
+import CandidateCard from './CandidateCard'
 import { Button } from '../ui/Button'
 import { Field, inputClass } from '../ui/Field'
 
-type Scope = 'GAME' | 'SHARED'
+type Scope = 'GAME' | 'SHARED' | 'PENDING'
 type OldKoMode = 'CANDIDATE' | 'CUSTOM' | 'NONE'
 
 export interface GlossaryPanelProps {
@@ -93,7 +94,18 @@ export default function GlossaryPanel({ gameId, projectId, onClose, initial }: G
 
   const gameList = useQuery({ queryKey: ['glossary', gameId, 'GAME'], queryFn: () => api.glossary.list(gameId, 'GAME') })
   const sharedList = useQuery({ queryKey: ['glossary', gameId, 'SHARED'], queryFn: () => api.glossary.list(gameId, 'SHARED') })
-  const active = scope === 'GAME' ? gameList : sharedList
+  const pendingList = useQuery({
+    queryKey: ['glossaryCandidates', gameId],
+    queryFn: () => api.glossaryCandidates.list(gameId).catch(() => [] as GlossaryCandidate[]),
+  })
+  const active = scope === 'SHARED' ? sharedList : gameList
+  // 같은 원문의 결정은 이웃하게 모은다(처음 나온 순서는 새것 먼저 그대로).
+  const pending = (() => {
+    const list = pendingList.data ?? []
+    const order = new Map<string, number>()
+    for (const c of list) if (!order.has(c.src)) order.set(c.src, order.size)
+    return [...list].sort((a, b) => order.get(a.src)! - order.get(b.src)!)
+  })()
   const rows = [...(active.data ?? [])].sort((a, b) => a.find.localeCompare(b.find, 'ko'))
 
   const previewNote = srcPartial && !effectiveOldKo ? SRC_PARTIAL_NOTE
@@ -151,6 +163,7 @@ export default function GlossaryPanel({ gameId, projectId, onClose, initial }: G
   }, [gameId, srcPartial, find, ko])
 
   const invalidateGlossary = () => qc.invalidateQueries({ queryKey: ['glossary', gameId] })
+  const invalidateCandidates = () => qc.invalidateQueries({ queryKey: ['glossaryCandidates', gameId] })
   const invalidateRows = () => {
     qc.invalidateQueries({ queryKey: ['workspace-rows', projectId] })
     qc.invalidateQueries({ queryKey: ['workspace-summary', projectId] })
@@ -198,6 +211,23 @@ export default function GlossaryPanel({ gameId, projectId, onClose, initial }: G
     onError: (e) => setError(toMessage(e)),
   })
 
+  // 이미 다른 사람이 처리한 후보(409)는 목록만 다시 불러오고 오류 칸에 알린다.
+  const onCandidateError = (e: unknown) => {
+    if (e instanceof ApiError && e.status === 409) { setError('이미 처리된 후보입니다.'); invalidateCandidates() }
+    else setError(toMessage(e))
+  }
+  const approve = useMutation({
+    mutationFn: (c: GlossaryCandidate) => api.glossaryCandidates.approve(c.id),
+    onSuccess: (_r, c) => { setError(null); invalidateGlossary(); invalidateCandidates(); showNotice(`단어장에 넣었습니다: ${c.src} → ${c.ko}`) },
+    onError: onCandidateError,
+  })
+  const dismiss = useMutation({
+    mutationFn: (c: GlossaryCandidate) => api.glossaryCandidates.dismiss(c.id),
+    onSuccess: () => { setError(null); invalidateCandidates() },
+    onError: onCandidateError,
+  })
+  const candidateBusy = approve.isPending || dismiss.isPending
+
   const onSubmit = (e: FormEvent) => {
     e.preventDefault()
     save.mutate({ kind, matchMode, find: find.trim(), ko: ko.trim() || null, note: note.trim() || null, oldKo: effectiveOldKo })
@@ -218,10 +248,10 @@ export default function GlossaryPanel({ gameId, projectId, onClose, initial }: G
         <button type="button" aria-label="닫기" onClick={onClose} className="press flex h-7 w-7 items-center justify-center rounded-full text-base text-muted hover:bg-canvas">×</button>
       </div>
       {/* 두 목록을 오가는 분할 버튼. 탭 이름(aria-label)은 건수를 빼고 둔다. */}
-      <div role="tablist" className="mx-4 grid grid-cols-2 rounded-lg bg-canvas p-0.5">
-        {(['GAME', 'SHARED'] as const).map((s) => {
-          const n = (s === 'GAME' ? gameList : sharedList).data?.length
-          const label = s === 'GAME' ? '이번 게임' : '공유 단어집'
+      <div role="tablist" className="mx-4 grid grid-cols-3 rounded-lg bg-canvas p-0.5">
+        {(['GAME', 'SHARED', 'PENDING'] as const).map((s) => {
+          const n = (s === 'GAME' ? gameList : s === 'SHARED' ? sharedList : pendingList).data?.length
+          const label = s === 'GAME' ? '이번 게임' : s === 'SHARED' ? '공유 단어집' : '승인 대기'
           return (
             <button key={s} type="button" role="tab" aria-label={label} aria-selected={scope === s} onClick={() => setScope(s)}
               className={`press rounded-md py-1 text-xs ${scope === s ? 'bg-white font-semibold text-ink shadow-[0_1px_2px_rgba(16,24,40,0.12)]' : 'text-muted hover:text-ink'}`}>
@@ -242,7 +272,17 @@ export default function GlossaryPanel({ gameId, projectId, onClose, initial }: G
       )}
       {error && <p role="alert" className="mx-4 mb-2 break-keep rounded-lg bg-orangeSoft px-3 py-1.5 text-[11px] leading-relaxed text-orange">{error}</p>}
       <div className="flex-1 overflow-auto border-t border-lineSoft px-2 py-1">
-        {shown.length === 0 ? (
+        {scope === 'PENDING' ? (
+          pending.length === 0 ? (
+            <p className="px-2 py-8 text-center text-xs text-muted">{pendingList.isLoading ? '불러오는 중…' : '승인 대기 중인 결정이 없습니다'}</p>
+          ) : (
+            <ul className="flex flex-col gap-2 px-1 py-1">
+              {pending.map((c) => (
+                <li key={c.id}><CandidateCard c={c} busy={candidateBusy} onApprove={() => approve.mutate(c)} onDismiss={() => dismiss.mutate(c)} /></li>
+              ))}
+            </ul>
+          )
+        ) : shown.length === 0 ? (
           <p className="px-2 py-8 text-center text-xs text-muted">{q ? '검색 결과가 없습니다.' : active.isLoading ? '불러오는 중…' : '아직 항목이 없습니다. 아래에서 추가하거나, 표의 칸을 우클릭하세요.'}</p>
         ) : (
           <ul>

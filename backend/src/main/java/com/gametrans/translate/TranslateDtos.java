@@ -45,7 +45,10 @@ public final class TranslateDtos {
     /** base: 제안을 받을 때의 Fix(before). 그 사이 Fix가 바뀌었으면 넣지 않는다. */
     public record SaveItem(Long segmentId, String text, String base) {}
     /** 고른 제안을 사람이 저장한 것처럼 넣는다(최대 500행, 한 게임). */
-    public record SaveBatchRequest(List<SaveItem> items) {}
-    /** propagated: 같은 원문이라 따라 바뀐 행 수. activityIds: 이번에 만든 POLISH 변경 내역(파일마다 하나) — Ctrl+Z가 쓴다. */
-    public record SaveBatchResult(int saved, int skipped, int propagated, List<Long> activityIds) {}
+    public record SaveBatchRequest(List<SaveItem> items, String source) {}
+    /**
+     * unchanged: 지금 Fix와 이미 같은 글이라 넣지도 건너뛰지도 않은 행 수. propagated: 같은 원문이라 따라 바뀐 행 수.
+     * activityIds: 이번에 만든 POLISH 변경 내역(파일마다 하나) — Ctrl+Z가 쓴다.
+     */
+    public record SaveBatchResult(int saved, int skipped, int unchanged, int propagated, List<Long> activityIds, List<Skip> skippedRows, int finalMarked) {}
 }

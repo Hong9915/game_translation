@@ -348,6 +348,25 @@ public final class TestWorkbooks {
         } catch (IOException e) { throw new UncheckedIOException(e); }
     }
 
+    /** existingKoAsFinal()과 같은 모양인데 1행·2행의 원문이 같다(최종 리뷰 레인 안 같은 원문 따라 바뀜 시험용). */
+    public static byte[] finalSameSourceTwice() {
+        try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet s = wb.createSheet("Skill");
+            String[][] rows = {
+                {"SkillID", "CN", "EN", "KR", "KR_Fix"},
+                {"1", "正义裁决", "Rule of Law", "정의의 심판", "정의의 심판"},
+                {"2", "正义裁决", "Rule of Law", "정의의 심판", "정의의 심판"},
+                {"3", "攻击", "Attack", "공격", "공격"},
+            };
+            for (int r = 0; r < rows.length; r++) {
+                Row row = s.createRow(r);
+                for (int c = 0; c < rows[r].length; c++) row.createCell(c).setCellValue(rows[r][c]);
+            }
+            wb.write(out);
+            return out.toByteArray();
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
     private static final String[] FORM_HEADERS = {"角色", "道具", "技能", "地点", "怪物", "货币", "其他"};
     private static final String[] FORM_EXAMPLE = {"森之召唤师", "火焰之剑", "雷霆一击", "迷雾森林", "暗影狼王", "钻石", "公会"};
 

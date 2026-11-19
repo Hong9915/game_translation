@@ -7,6 +7,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gametrans.activity.Activity;
 import com.gametrans.activity.ActivityService;
+import com.gametrans.glossary.GlossaryCandidateService;
 import com.gametrans.llm.ToolLoop;
 import com.gametrans.normalize.Segment;
 import com.gametrans.normalize.SegmentRepository;
@@ -58,10 +59,12 @@ public class CommandFixService {
     private final BulkShorten shortener;
     private final ReviewService review;
     private final TermSwap termSwap;
+    private final GlossaryCandidateService candidates;
 
     public CommandFixService(PipelineRunner runner, CommandAgent agent, SegmentRepository segments, BulkFixWriter writer,
                              ActivityService activities, ObjectMapper mapper, SheetScopes scopes, BulkShorten shortener, ReviewService review,
-                             TermSwap termSwap) {
+                             TermSwap termSwap, GlossaryCandidateService candidates) {
+        this.candidates = candidates;
         this.termSwap = termSwap;
         this.scopes = scopes;
         this.shortener = shortener;
@@ -201,12 +204,16 @@ public class CommandFixService {
             Map<Long, SheetRow> inScope = new HashMap<>();
             for (SheetRow r : rows) inScope.put(r.id(), r);
             List<Segment> editable = segments.findEditableInProjects(scope.projectIds(), byId.keySet());
-            return new FixResult(writer.write(editable, s -> {
+            int n = writer.write(editable, s -> {
                 Item it = byId.get(s.getId());
                 SheetRow r = inScope.get(s.getId());
                 return r != null && r.src().contains(term.src()) && it.before().equals(s.getLatestKo())
                         && TermSwap.acceptable(it.before(), it.after(), term.ko()) ? it.after().trim() : null;
-            }, reviewerId, activities.lazyPerProject(Activity.Kind.COMMAND_FIX, reviewerId, detail)));
+            }, reviewerId, activities.lazyPerProject(Activity.Kind.COMMAND_FIX, reviewerId, detail));
+            // 저장된 행이 있으면 단어장 후보로 남긴다(승인 대기). 명령 글이 비었으면 이유는 없다.
+            String cmd = req.command() == null || req.command().isBlank() ? null : req.command().strip();
+            candidates.record(scope.gameId(), term.src(), term.ko(), null, n, cmd, "COMMAND", null, reviewerId);
+            return new FixResult(n);
         }
         if (pipeline.shorten()) {
             // GPT 결과라 다시 계산할 수 없다 — 범위 안 행이고, 그 사이 번역이 그대로이며, 짧아졌고 태그 짝이 맞는 행만 쓴다

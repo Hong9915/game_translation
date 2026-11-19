@@ -55,6 +55,15 @@ public class ReviewerService {
         return reviewers.findById(id).orElseThrow(() -> new IllegalArgumentException("모르는 검토자입니다: " + id));
     }
 
+    /** 커넥터 쓰기에 검수자가 없을 때(헤더 없음, 또는 MCP의 계정 확인 캐시 60초 안에 지워진 검수자). */
+    public static final String CONNECTOR_REVIEWER_MISSING = "검수자를 찾을 수 없습니다. Claude에서 커넥터를 다시 연결해 주세요.";
+
+    /** 커넥터 쓰기용: resolve와 달리 헤더가 없어도 익명으로 넘기지 않는다 — 없거나 모르는 id면 400. */
+    public Reviewer requireForConnector(Long id) {
+        if (id == null) throw new IllegalArgumentException(CONNECTOR_REVIEWER_MISSING);
+        return reviewers.findById(id).orElseThrow(() -> new IllegalArgumentException(CONNECTOR_REVIEWER_MISSING));
+    }
+
     public boolean exists(Long id) { return id != null && reviewers.existsById(id); }
 
     public List<Reviewer> all() { return reviewers.findAllByOrderByIdAsc(); }

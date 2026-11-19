@@ -10,6 +10,26 @@ const base = {
 }
 
 describe('TopBar', () => {
+  it('showsProposalChipOnlyWhenPending', async () => {
+    const onOpenProposals = vi.fn()
+    const { rerender } = render(<MemoryRouter><TopBar {...base} proposalCount={2} onOpenProposals={onOpenProposals} /></MemoryRouter>)
+    const buttons = screen.getAllByRole('button').map((b) => b.textContent)
+    expect(buttons.indexOf('Claude 제안 2')).toBe(buttons.indexOf('메모') - 1)
+    await userEvent.click(screen.getByRole('button', { name: 'Claude 제안 2' }))
+    expect(onOpenProposals).toHaveBeenCalledTimes(1)
+    rerender(<MemoryRouter><TopBar {...base} proposalCount={0} onOpenProposals={onOpenProposals} /></MemoryRouter>)
+    expect(screen.queryByRole('button', { name: /Claude 제안/ })).toBeNull()
+    rerender(<MemoryRouter><TopBar {...base} /></MemoryRouter>)
+    expect(screen.queryByRole('button', { name: /Claude 제안/ })).toBeNull()
+  })
+
+  it('glossaryBadgeShowsPendingCount', () => {
+    const { rerender } = render(<MemoryRouter><TopBar {...base} glossaryPending={2} /></MemoryRouter>)
+    expect(screen.getByLabelText('승인 대기 2')).toBeInTheDocument()
+    rerender(<MemoryRouter><TopBar {...base} glossaryPending={0} /></MemoryRouter>)
+    expect(screen.queryByLabelText(/승인 대기/)).toBeNull()
+  })
+
   it('메모 버튼은 게임의 메모를 새 창으로 열고, 그 오른쪽에 교정 규칙이 있다', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     render(<MemoryRouter><TopBar {...base} /></MemoryRouter>)

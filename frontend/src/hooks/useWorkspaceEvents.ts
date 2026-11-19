@@ -5,6 +5,7 @@ import { isProjectStreamOpen, subscribeProjectStream } from '../lib/projectStrea
 import { patchRows } from '../lib/workspaceCache'
 
 const HIGHLIGHT_MS = 2000
+const HANDLED = new Set<string>(['presence', 'refresh', 'glossary', 'marks-bulk', 'segment-updated', 'assigned', 'marks'])
 const SUMMARY_COALESCE_MS = 500
 
 /** 프로젝트 SSE 스트림의 연결 상태. */
@@ -79,6 +80,8 @@ export function useWorkspaceEvents(projectId: number, me: ReviewerRef | null, on
       review: (e) => {
         const ev = JSON.parse((e as MessageEvent).data) as ReviewEvent
         if (ev.type === 'presence') { setPresence(ev.reviewers); return }
+        // 모르는 type(앞으로 생길 것 포함)은 그냥 지나간다 — 아래는 segmentIds·row가 있다고 가정한 처리다.
+        if (!HANDLED.has(ev.type)) return
         if (ev.type === 'refresh') { scheduleReload(true); scheduleActivity(); return }
         // 누가 단어장 항목을 고쳤다: 열린 단어장 패널이 목록을 다시 읽는다(행이 안 바뀌었어도 온다).
         if (ev.type === 'glossary') { qc.invalidateQueries({ queryKey: ['glossary'] }); scheduleActivity(); return }

@@ -1,7 +1,8 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mockFetch } from '../test/mockFetch'
+import { resetDeferredForTests } from '../hooks/useConnectorProposals'
+import { mockFetch, type MockRoute } from '../test/mockFetch'
 import { renderWithProviders } from '../test/render'
 import { WorkspacePage } from './WorkspacePage'
 
@@ -36,7 +37,7 @@ beforeEach(() => {
   localStorage.removeItem('gametrans.workspaceViewSize')
 })
 
-afterEach(() => { FakeEventSource.instances = [] })
+afterEach(() => { FakeEventSource.instances = []; resetDeferredForTests() })
 
 const render = () => renderWithProviders(<WorkspacePage />, { route: '/review/1', path: '/review/:id' })
 const routes = () => [
@@ -47,6 +48,7 @@ const routes = () => [
   { path: '/reviewers', body: [me] },
   { method: 'POST', path: '/presence', body: { reviewers: [] } },
   { method: 'DELETE', path: '/presence', status: 204 },
+  { path: '/connector/proposals?', body: [] },
 ]
 
 describe('WorkspacePage', () => {
@@ -938,5 +940,101 @@ describe('WorkspacePage', () => {
       expect(writeText).toHaveBeenCalledWith('확인\n혼돈의 성물\n"셋\t넷"')
       expect(calls.some((c) => c.url.includes('sheet=UI&page=1&size=500'))).toBe(true)
     })
+  })
+})
+
+describe('Claude 제안', () => {
+  const prow = (id: number, over = {}) => ({
+    segmentId: id, projectId: 1, fileName: 'a.xlsx', sheet: 'UI', rowNo: id, indexLabel: null,
+    src: `原${id}`, fix: `고침${id}`, base: `고침${id}`, text: `새글${id}`, reason: null, finalReview: false, lockedReason: null, ...over,
+  })
+  const detail = { id: 5, reviewerId: 1, gameId: 3, title: '다듬기', status: 'PENDING', createdAt: '2026-11-17T00:00:00Z', decidedAt: null, rows: [prow(10)], result: null }
+  const summaries = [{ id: 5, title: '다듬기', rowCount: 1, createdAt: '2026-11-17T00:00:00Z' }]
+  const proposalRoutes = (extra: MockRoute[] = []): MockRoute[] => [
+    ...extra,
+    { path: '/connector/proposals?', body: summaries },
+    { path: '/connector/proposals/5', body: detail },
+    ...routes(),
+  ]
+
+  it('opensPendingProposalForMe', async () => {
+    const { calls } = mockFetch(proposalRoutes())
+    render()
+    expect(await screen.findByRole('heading', { name: 'Claude가 고칠 안 — 다듬기 (1행)' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Claude 제안 1' })).toBeInTheDocument()
+    expect(calls.some((c) => c.url.includes('/connector/proposals?') && c.url.includes('gameId=3') && c.url.includes('reviewerId=1'))).toBe(true)
+  })
+
+  it('savingProposalPushesUndoAndNotifies', async () => {
+    const result = { saved: 1, unchanged: 0, propagated: 1, excluded: [], skippedRows: [{ id: 2, reason: '확정' }], finalMarked: 0, activityIds: [40] }
+    const { calls } = mockFetch(proposalRoutes([
+      { method: 'POST', path: '/connector/proposals/5/apply', body: { ...detail, status: 'APPLIED', result } },
+      { method: 'POST', path: '/activity/undo', body: { reverted: 1, skipped: 0, activityIds: [91] } },
+    ]))
+    render()
+    await userEvent.click(await screen.findByRole('button', { name: '체크한 1행 저장' }))
+    expect(await screen.findByText('Claude 제안 1행 저장 · 건너뜀 1행(확정) · 같은 원문 1행도 바뀜')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /Claude가 고칠 안/ })).toBeNull())
+    expect(screen.queryByRole('button', { name: /Claude 제안/ })).toBeNull()
+    fireEvent.keyDown(screen.getByRole('grid'), { key: 'z', code: 'KeyZ', ctrlKey: true })
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.url.includes('/activity/undo'))).toHaveLength(1))
+    expect(calls.find((c) => c.url.includes('/activity/undo'))?.body).toEqual({ activityIds: [40] })
+  })
+
+  it('laterHidesUntilChip', async () => {
+    mockFetch(proposalRoutes())
+    render()
+    await userEvent.click(await screen.findByRole('button', { name: '나중에' }))
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /Claude가 고칠 안/ })).toBeNull())
+    await userEvent.click(screen.getByRole('button', { name: 'Claude 제안 1' }))
+    expect(await screen.findByRole('heading', { name: 'Claude가 고칠 안 — 다듬기 (1행)' })).toBeInTheDocument()
+  })
+
+  it('doesNotShowDialogWhileRenaming', async () => {
+    mockFetch(proposalRoutes())
+    render()
+    await screen.findByRole('heading', { name: /Claude가 고칠 안/ })
+    await userEvent.click(screen.getByRole('button', { name: '나중에' }))
+    await userEvent.click(screen.getByRole('button', { name: '형준' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Claude 제안 1' }))
+    expect(screen.queryByRole('heading', { name: /Claude가 고칠 안/ })).toBeNull()
+  })
+
+  it('doesNotOpenOverPolishDialog', async () => {
+    const game = { id: 3, name: '삼국지M', deeplInstructions: '', gptTranslateBase: '', gptTranslateExtra: null, gptPolishBase: '다듬기 기본 지시', gptPolishExtra: null }
+    let list: typeof summaries = []
+    mockFetch([{ path: '/connector/proposals?', get body() { return list } }, { path: '/connector/proposals/5', body: detail }, { path: '/games/3', body: game }, ...routes()])
+    render()
+    await screen.findByText('ITEM_1001')
+    fireEvent.mouseDown(screen.getByRole('gridcell', { name: '2행 Fix' }), { button: 0 })
+    fireEvent.mouseDown(screen.getByRole('gridcell', { name: '3행 Fix' }), { button: 0, shiftKey: true })
+    fireEvent.contextMenu(screen.getByRole('gridcell', { name: '3행 Fix' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'GPT로 다듬기 (2행)' }))
+    expect(await screen.findByRole('heading', { name: 'GPT로 다듬기 (2행)' })).toBeInTheDocument()
+    // 다듬기 창이 열린 사이에 제안이 온다
+    list = summaries
+    act(() => { for (const es of FakeEventSource.instances) es.emit('proposal', { type: 'connector-proposal', proposalId: 5, reviewerId: 1, gameId: 3, status: 'PENDING' }) })
+    expect(await screen.findByRole('button', { name: 'Claude 제안 1' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Claude가 고칠 안/ })).toBeNull()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(await screen.findByRole('heading', { name: 'Claude가 고칠 안 — 다듬기 (1행)' })).toBeInTheDocument()
+  })
+
+  it('undoScopeIsCapturedEachTimeDialogShows', async () => {
+    const result = { saved: 1, unchanged: 0, propagated: 0, excluded: [], skippedRows: [], finalMarked: 0, activityIds: [40] }
+    const { calls } = mockFetch(proposalRoutes([
+      { method: 'POST', path: '/connector/proposals/5/apply', body: { ...detail, status: 'APPLIED', result } },
+      { method: 'POST', path: '/activity/undo', body: { reverted: 1, skipped: 0, activityIds: [91] } },
+    ]))
+    render()
+    await userEvent.click(await screen.findByRole('button', { name: '나중에' }))
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /Claude가 고칠 안/ })).toBeNull())
+    await userEvent.click(screen.getByRole('tab', { name: /Skill/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Claude 제안 1' }))
+    await userEvent.click(await screen.findByRole('button', { name: '체크한 1행 저장' }))
+    await screen.findByText(/Claude 제안 1행 저장/)
+    fireEvent.keyDown(screen.getByRole('grid'), { key: 'z', code: 'KeyZ', ctrlKey: true })
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.url.includes('/activity/undo'))).toHaveLength(1))
+    expect(calls.find((c) => c.url.includes('/activity/undo'))?.body).toEqual({ activityIds: [40] })
   })
 })

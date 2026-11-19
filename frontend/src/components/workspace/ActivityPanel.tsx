@@ -20,9 +20,9 @@ export interface ActivityPanelProps {
 interface Ctx { projectId?: number; game?: ActivityGameScope; key: number | string; onJump: ActivityPanelProps['onJump'] }
 
 const ROWS_PAGE = 20
-const JOB_KINDS = new Set(['FIX_TERMS', 'SHORTEN', 'GLOSSARY_APPLY', 'REVERT', 'JOSA_FIX', 'TAG_SPACING', 'COMMAND_FIX', 'POLISH', 'RULE_APPLY'])
+const JOB_KINDS = new Set(['FIX_TERMS', 'SHORTEN', 'GLOSSARY_APPLY', 'REVERT', 'JOSA_FIX', 'TAG_SPACING', 'COMMAND_FIX', 'POLISH', 'RULE_APPLY', 'CONNECTOR'])
 /** 되돌릴 수 있는 종류. 단어장 편집은 항목 자체를 단어장에서 고친다. */
-const REVERTIBLE = new Set(['EDIT', 'RETRANSLATE', 'FIX_TERMS', 'SHORTEN', 'GLOSSARY_APPLY', 'REVERT', 'JOSA_FIX', 'TAG_SPACING', 'COMMAND_FIX', 'POLISH', 'RULE_APPLY'])
+const REVERTIBLE = new Set(['EDIT', 'RETRANSLATE', 'FIX_TERMS', 'SHORTEN', 'GLOSSARY_APPLY', 'REVERT', 'JOSA_FIX', 'TAG_SPACING', 'COMMAND_FIX', 'POLISH', 'RULE_APPLY', 'CONNECTOR'])
 const GLOSSARY_APPLY_NOTE = '단어장 항목은 그대로 남아 다음 일괄 적용 때 다시 바뀝니다. 항목을 고치거나 지우려면 단어장에서 하세요.'
 
 /** 검수 워크스페이스 오른쪽 변경 내역 패널(설계 2026-09-30 §4). 단어장 패널과 같은 자리·같은 폭. */

@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.nullValue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gametrans.FakeLlmClient;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
@@ -31,6 +33,7 @@ class TermSwapCommandTest extends IntegrationTest {
     @Autowired LlmClient llmBean;
     @Autowired ObjectMapper json;
     @Autowired TermSwap termSwap;
+    @Autowired JdbcTemplate jdbc;
 
     FakeLlmClient llm;
     long pid;
@@ -55,6 +58,44 @@ class TermSwapCommandTest extends IntegrationTest {
 
     private ResultActions fix(Map<String, Object> body) throws Exception {
         return mvc.perform(post("/api/review/{id}/command-fix", pid).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body)));
+    }
+
+    private long gameId() {
+        return jdbc.queryForObject("select game_id from project where id = ?", Long.class, pid);
+    }
+
+    /** 저장한 행이 있으면 단어장 후보 한 장(원문·바꾼 한국어·행 수·명령 글·COMMAND). 옛 한국어는 없다. */
+    @Test
+    void savedTermSwapRecordsCandidate() throws Exception {
+        Segment a = row("放置陷阱"), c = row("躲避陷阱");
+        fix(Map.of("sheet", "Skill", "command", "陷阱 이거를 덫으로", "ops", List.of(TRAP), "items", List.of(
+                Map.of("segmentId", a.getId(), "before", "함정을 설치", "after", "덫을 설치"),
+                Map.of("segmentId", c.getId(), "before", "함정을 피하기", "after", "덫을 피하기"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applied").value(2));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/games/{gameId}/glossary/candidates", gameId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].src").value("陷阱"))
+                .andExpect(jsonPath("$[0].ko").value("덫"))
+                .andExpect(jsonPath("$[0].oldKo").value(nullValue()))
+                .andExpect(jsonPath("$[0].rows").value(2))
+                .andExpect(jsonPath("$[0].source").value("COMMAND"));
+    }
+
+    /** 저장된 행이 0이면(지금 번역이 미리 본 것과 다름) 후보도 없다. */
+    @Test
+    void termSwapThatSavesNothingRecordsNoCandidate() throws Exception {
+        Segment a = row("放置陷阱");
+        fix(Map.of("sheet", "Skill", "command", "陷阱 이거를 덫으로", "ops", List.of(TRAP), "items", List.of(
+                Map.of("segmentId", a.getId(), "before", "옛 번역", "after", "덫을 설치"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applied").value(0));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/games/{gameId}/glossary/candidates", gameId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
     }
 
     /** 원문에 陷阱이 든 6행(함정·트랩)만 GPT에 간다. GPT가 그대로 돌려준 행(못 고침)은 미리 보기에서 빠진다. */

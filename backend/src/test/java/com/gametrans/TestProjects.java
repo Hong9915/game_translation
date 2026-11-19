@@ -58,6 +58,8 @@ public final class TestProjects {
 
     public static long uploadExistingKoAsFinal(MockMvc mvc, String gameName) throws Exception { return upload(mvc, "Skill_final.xlsx", TestWorkbooks.existingKoAsFinal(), gameName); }
 
+    public static long uploadFinalSameSourceTwice(MockMvc mvc, String gameName) throws Exception { return upload(mvc, "Skill_final2.xlsx", TestWorkbooks.finalSameSourceTwice(), gameName); }
+
     /** existingKoAsFinal()을 최종 리뷰 버전으로(기존 D, 수정 E). */
     public static final String FINAL_SKILL_NORMALIZE = """
         {"sheetName":"Skill","headerRow":1,"keyCol":"A",

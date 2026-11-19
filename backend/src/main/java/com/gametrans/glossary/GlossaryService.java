@@ -297,6 +297,30 @@ public class GlossaryService {
     }
 
     /**
+     * 후보 승인(2026-11-18): (게임, SRC, src) 항목을 ko로 만들거나 고친다. 행은 이미 바뀐 결정이라 applier·rewrite를 안 탄다.
+     * old_ko는 비운다 — 남아 있으면 나중에 항목 수정·전체 다시 적용 때 사람이 뺀 행까지 자동으로 고친다. note는 그대로.
+     */
+    @Transactional
+    public GlossaryDtos.EntryDto adoptDecision(Long gameId, String src, String ko, Long reviewerId) {
+        String f = trimmedFind(src);
+        String k = ko == null ? "" : ko.trim();
+        if (k.isEmpty()) throw new IllegalArgumentException("표기를 입력하세요.");
+        if (!games.existsById(gameId)) throw new NotFoundException("게임을 찾을 수 없습니다: " + gameId);
+        GlossaryEntry e = repo.findByGameIdAndKindAndFind(gameId, Kind.SRC, f).orElseGet(GlossaryEntry::new);
+        boolean existed = e.getId() != null;
+        e.setGameId(gameId); e.setKind(Kind.SRC); e.setFind(f);
+        e.setMatchMode(f.codePointCount(0, f.length()) == 1 ? MatchMode.WHOLE : MatchMode.PARTIAL);
+        e.setKo(k);
+        e.setOldKo(null);
+        if (e.getCreatedBy() == null) e.setCreatedBy(reviewerId);
+        e.setUpdatedAt(Instant.now());
+        GlossaryEntry saved = repo.save(e);
+        logEdit(gameId, existed ? "UPDATE" : "ADD", saved, reviewerId);
+        notifyChanged(gameId, reviewerId);
+        return dto(saved);
+    }
+
+    /**
      * 띄어쓰기 한꺼번에 통일(행만 고친다 — 단어장엔 남기지 않는다). 항목마다 통일과 같은 방식으로 원문에 find가 든 행에서 replace → ko.
      * 띄어쓰기만 다른 꼴만 받는다 — 다른 낱말로 바꾸는 일은 카드마다 통일 창에서 사람이 본다. 바뀐 행은 프로젝트마다 적용 한 건으로 묶여
      * 한 번에 되돌릴 수 있다. 전부 한 트랜잭션이라 하나라도 잘못이면 아무것도 안 바뀐다.

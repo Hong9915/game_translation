@@ -140,6 +140,7 @@ public class ActivityService {
      * 그 사이 바뀐 행(지금 본문 ≠ 그 항목의 마지막 본문)·확정 행·첫 판 행(이전 본문 없음)은 건너뛴다 — 덮어쓰지 않는다.
      * 조사 고침(JOSA_FIX)만은 확정 행도 되돌린다 — 확정 행까지 고친 항목이라, 건너뛰면 그 행은 되돌릴 길이 없다.
      * 되돌리기 자체가 REVERT 항목으로 남아(파일마다 하나) 다시 되돌릴 수 있다. 단어장 항목은 그대로라 단어장 적용은 다음 일괄 적용 때 다시 바뀐다.
+     * 커넥터가 켠 최종 수정도 같이 돌린다(flipFinalMarks).
      */
     @Transactional
     public RevertResult revert(Long activityId, Long reviewerId) {
@@ -159,8 +160,13 @@ public class ActivityService {
             if (prev == null || (skipConfirmed && s.isConfirmed()) ||!after.get(s.getId()).equals(s.getLatestKo())) continue;
             candidates.add(s);
         }
+        Function<Long, Long> lazy = lazyPerProject(Kind.REVERT, reviewerId, Map.of("revertOf", activityId));
+        Map<Long, Long> reverts = new HashMap<>();
         int reverted = writer.write(candidates, s -> before.get(s.getId()), reviewers.exists(reviewerId) ? reviewerId : null,
-                lazyPerProject(Kind.REVERT, reviewerId, Map.of("revertOf", activityId)));
+                pid -> reverts.computeIfAbsent(pid, lazy));
+        Map<Long, Map<String, Object>> extra = new HashMap<>();
+        flipFinalMarks(a, Map.of(), reverts, extra);
+        addDetail(extra);
         return new RevertResult(reverted, before.size() - reverted);
     }
 
@@ -175,6 +181,7 @@ public class ActivityService {
      * 원래 항목·검토자가 그 사이 지워졌으면 null로 매단다(첫 판만은 새 REVERT에 매달아 되돌릴 길을 남긴다). 단어장 편집은 판이 없으니 조용히 넘어간다.
      * 넘어온 순서와 상관없이 중복을 걷고 최신 항목(id 큰 것)부터 되돌린다 — 같은 행을 여러 번 고친 걸 한 번에 되돌려도, 돌려준 REVERT id로
      * 다시 실행해도 마지막 판부터 거꾸로 풀려야 "그 사이 바뀐 행"으로 걸리지 않는다.
+     * 커넥터가 켠 최종 수정도 같이 돌린다(flipFinalMarks) — 빈 칸으로 돌린 행·되살린 행도 되돌린 행으로 친다.
      */
     @Transactional
     public UndoResult undo(List<Long> activityIds, Long reviewerId) {
@@ -190,12 +197,14 @@ public class ActivityService {
             Activity a = repo.findById(id).orElseThrow(() -> new NotFoundException("변경 내역을 찾을 수 없습니다: " + id));
             if (a.getKind() == Kind.GLOSSARY_EDIT) continue;
             Function<Long, Long> lazy = lazyPerProject(Kind.REVERT, reviewerId, Map.of("revertOf", id, "undo", true));
+            Map<Long, Long> reverts = new HashMap<>();   // 프로젝트 → 이 항목을 되돌린 REVERT
             Function<Long, Long> activityFor = pid -> {
-                Long aid = lazy.apply(pid);
+                Long aid = reverts.computeIfAbsent(pid, lazy);
                 made.add(aid);
                 return aid;
             };
             Map<Long, List<Map<String, Object>>> cleared = new LinkedHashMap<>();
+            Map<Long, Long> chainRows = new HashMap<>();   // 빈 칸으로 돌리거나 사슬로 되살린 행 → 프로젝트(writer가 쓴 행은 이번 REVERT의 판으로 안다)
             int total = 0, done = 0;
 
             // 1) 이 항목이 쓴 판: before(첫 판 이전 본문, 없으면 null)와 after(마지막 판 본문). putIfAbsent는 null 값을 없는 것으로 보므로 containsKey로 첫 판만 잡는다.
@@ -230,6 +239,7 @@ public class ActivityService {
                     revisionRepo.deleteBySegmentIdAndIdGreaterThanEqual(s.getId(), from);
                     segments.updateTermMiss(s.getId(), null);
                     cleared.computeIfAbsent(aid, k -> new ArrayList<>()).add(Map.of("segmentId", s.getId(), "chain", chain));
+                    chainRows.put(s.getId(), s.getProjectId());
                     touched.add(s.getProjectId());
                     done++;
                 }
@@ -266,24 +276,69 @@ public class ActivityService {
                     }
                     Map<String, String> g = glossaries.computeIfAbsent(s.getProjectId(), termMiss::glossaryFor);
                     segments.updateTermMiss(s.getId(), GlossaryCheck.format(GlossaryCheck.missing(s.getSrcText(), text, g)));
+                    chainRows.put(s.getId(), s.getProjectId());
                     touched.add(s.getProjectId());
                     done++;
                 }
             }
 
-            for (Map.Entry<Long, List<Map<String, Object>>> e : cleared.entrySet()) {
-                Activity rev = repo.findById(e.getKey()).orElseThrow();
-                Map<String, Object> d = new HashMap<>(rev.getDetail());
-                d.put("cleared", e.getValue());
-                rev.setDetail(d);
-                repo.save(rev);
-            }
+            Map<Long, Map<String, Object>> extra = new HashMap<>();
+            cleared.forEach((aid, list) -> extra.computeIfAbsent(aid, k -> new HashMap<>()).put("cleared", list));
+            flipFinalMarks(a, chainRows, reverts, extra);
+            addDetail(extra);
             reverted += done;
             skipped += total - done;
         }
         // 판을 지우거나 되살린 프로젝트만 여기서 알린다 — writer.write는 자기가 바꾼 프로젝트를 이미 알린다.
         for (Long pid : touched) events.refresh(pid, reviewerId);
         return new UndoResult(reverted, skipped, new ArrayList<>(made));
+    }
+
+    /**
+     * 커넥터가 켠 최종 수정을 글과 함께 되돌린다(설계 2026-11-16 undo): a.detail.finalMarked(a가 새로 켠 행)는 끄고, finalUnmarked(a가 끈 행 —
+     * 앞선 되돌림의 REVERT)는 다시 켠다. 이번 호출이 실제로 되돌린 행만 바꾼다 — 그 사이 바뀌어 건너뛴 행, 처음부터 켜져 있어 목록에 없던 행은 그대로다.
+     * 되돌린 행 = 이번 REVERT(reverts: 프로젝트 → 항목 id)에 매달린 판의 행(BulkFixWriter.write가 건너뛴 후보는 판이 없어 빠진다) + chainRows(빈 칸으로 돌리거나 사슬로 되살린 행).
+     * 바꾼 id는 그 파일의 REVERT detail에 반대 키로 남겨(extra), 그 REVERT를 되돌리면(다시 실행) 다시 반대로 바뀐다.
+     * 그 파일에 이번 REVERT가 없으면(빈 칸 되살리기가 모든 판을 원래 항목에 다시 매단 경우) 원래 항목의 키가 그대로 그 몫을 한다.
+     * 두 키가 없는 항목(POLISH·EDIT 등)은 아무것도 읽지 않고 돌아간다.
+     */
+    private void flipFinalMarks(Activity a, Map<Long, Long> chainRows, Map<Long, Long> reverts, Map<Long, Map<String, Object>> extra) {
+        List<Long> marked = ids(a.getDetail().get("finalMarked"));
+        List<Long> unmarked = ids(a.getDetail().get("finalUnmarked"));
+        if (marked.isEmpty() && unmarked.isEmpty()) return;
+        Map<Long, Long> rows = new HashMap<>(chainRows);   // 되돌린 행 → 프로젝트
+        for (Map.Entry<Long, Long> e : reverts.entrySet())
+            for (TranslationRevision r : revisionRepo.findByActivityIdOrderByIdAsc(e.getValue())) rows.put(r.getSegmentId(), e.getKey());
+        flip(marked, false, "finalUnmarked", rows, reverts, extra);
+        flip(unmarked, true, "finalMarked", rows, reverts, extra);
+    }
+
+    private void flip(List<Long> ids, boolean on, String key, Map<Long, Long> rows, Map<Long, Long> reverts, Map<Long, Map<String, Object>> extra) {
+        List<Long> hit = ids.stream().filter(rows::containsKey).distinct().toList();
+        if (hit.isEmpty()) return;
+        segments.setFinalMark(hit, on);
+        Map<Long, List<Long>> byRevert = new HashMap<>();
+        for (Long sid : hit) {
+            Long rev = reverts.get(rows.get(sid));
+            if (rev != null) byRevert.computeIfAbsent(rev, k -> new ArrayList<>()).add(sid);
+        }
+        byRevert.forEach((rev, list) -> extra.computeIfAbsent(rev, k -> new HashMap<>()).put(key, list));
+    }
+
+    /** REVERT 항목 detail에 키(cleared·finalMarked·finalUnmarked)를 더한다 — 기존 detail(revertOf·undo)을 복사해 합친다. */
+    private void addDetail(Map<Long, Map<String, Object>> extra) {
+        for (Map.Entry<Long, Map<String, Object>> e : extra.entrySet()) {
+            Activity rev = repo.findById(e.getKey()).orElseThrow();
+            Map<String, Object> d = new HashMap<>(rev.getDetail());
+            d.putAll(e.getValue());
+            rev.setDetail(d);
+            repo.save(rev);
+        }
+    }
+
+    /** detail의 id 목록(JSON에서 읽으면 Integer·Long이 섞인다). 없거나 목록이 아니면 빈 목록. */
+    private static List<Long> ids(Object o) {
+        return o instanceof List<?> list ? list.stream().filter(Number.class::isInstance).map(n -> ((Number) n).longValue()).toList() : List.of();
     }
 
     private static boolean hasPrimary(Kind k) { return k == Kind.EDIT || k == Kind.RETRANSLATE; }

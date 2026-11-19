@@ -60,6 +60,15 @@ describe('ActivityPanel', () => {
     expect(onJump).toHaveBeenCalledWith('Skill', 5)
   })
 
+  it('connectorItemShowsLabelRowsAndRevert: 커넥터 항목은 종류 이름·행 수·되돌리기를 보여 준다', async () => {
+    const connector = { ...fixTerms, id: 31, kind: 'CONNECTOR', rowCount: 29, sheet: 'UI', detail: { sheet: 'UI' } }
+    mockFetch([{ path: '/projects/1/activity', body: { items: [connector] } }])
+    render()
+    expect(await screen.findByText('Claude 커넥터')).toBeInTheDocument()
+    expect(screen.getByText(/29행/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /되돌리기/ })).toBeInTheDocument()
+  })
+
   it('다른 파일의 행은 점프 버튼 없이 표시만 한다', async () => {
     mockFetch([
       { path: '/projects/1/activity', body: { items: [{ ...edit, primary: { ...edit.primary, projectId: 1 } }] } },

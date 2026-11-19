@@ -185,6 +185,14 @@ public interface SegmentRepository extends JpaRepository<Segment, Long>, JpaSpec
     int updateMarks(@Param("ids") List<Long> ids, @Param("r1") Boolean r1, @Param("r2") Boolean r2, @Param("r3") Boolean r3, @Param("nc") Boolean nc,
                     @Param("cf") Boolean cf, @Param("fm") Boolean fm);
 
+    /** 최종 리뷰 레인이면서 최종 수정 표시가 아직 꺼진 행만. */
+    @Query("select s.id from Segment s where s.id in :ids and s.finalReview = true and s.finalMark = false order by s.id")
+    List<Long> finalLaneUnmarked(@Param("ids") List<Long> ids);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true) @Transactional
+    @Query("update Segment s set s.finalMark = :on where s.id in :ids")
+    int setFinalMark(@Param("ids") List<Long> ids, @Param("on") boolean on);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true) @Transactional
     @Query("update Segment s set s.note = :note where s.id = :id")
     void updateNote(@Param("id") Long id, @Param("note") String note);

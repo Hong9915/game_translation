@@ -364,4 +364,46 @@ describe('GlossaryPanel', () => {
     expect(link).toHaveAttribute('href', '/games/7/glossary/recommend')
     expect(link).toHaveAttribute('target', '_blank')
   })
+
+  const cand = (id: number, src: string, ko: string) => ({ id, gameId: 7, src, ko, oldKo: null, rows: 3, reason: null, source: 'CONNECTOR', status: 'PENDING',
+    createdBy: 1, createdByName: '형준', createdAt: '2026-11-18T05:07:00', conflictKo: null })
+
+  it('pendingTabListsCandidatesAndApproves', async () => {
+    const { calls } = mockFetch([
+      { method: 'POST', path: '/glossary/candidates/1/approve', body: { entry, candidate: cand(1, '关卡', '스테이지'), closed: [] } },
+      { path: '/games/7/glossary/candidates', body: [cand(1, '关卡', '스테이지'), cand(2, '技能', '스킬')] },
+      { path: '/games/7/glossary', body: [] },
+    ])
+    renderWithProviders(<GlossaryPanel gameId={7} projectId={1} onClose={() => {}} />)
+    await userEvent.click(await screen.findByRole('tab', { name: '승인 대기' }))
+    expect(await screen.findByText('关卡 → 스테이지')).toBeInTheDocument()
+    expect(screen.getByText('技能 → 스킬')).toBeInTheDocument()
+    await userEvent.click(screen.getAllByRole('button', { name: '승인' })[0])
+    expect(await screen.findByText('단어장에 넣었습니다: 关卡 → 스테이지')).toBeInTheDocument()
+    expect(calls.some((c) => c.method === 'POST' && c.url.includes('/glossary/candidates/1/approve'))).toBe(true)
+  })
+
+  it('approve409ShowsAlreadyHandled', async () => {
+    const { calls } = mockFetch([
+      { method: 'POST', path: '/glossary/candidates/1/approve', status: 409, body: { message: '이미 처리된 후보입니다.', candidate: cand(1, '关卡', '스테이지') } },
+      { path: '/games/7/glossary/candidates', body: [cand(1, '关卡', '스테이지')] },
+      { path: '/games/7/glossary', body: [] },
+    ])
+    renderWithProviders(<GlossaryPanel gameId={7} projectId={1} onClose={() => {}} />)
+    await userEvent.click(await screen.findByRole('tab', { name: '승인 대기' }))
+    const before = calls.filter((c) => c.method === 'GET' && c.url.includes('/glossary/candidates')).length
+    await userEvent.click(await screen.findByRole('button', { name: '승인' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('이미 처리된 후보입니다.')
+    await waitFor(() => expect(calls.filter((c) => c.method === 'GET' && c.url.includes('/glossary/candidates')).length).toBeGreaterThan(before))
+  })
+
+  it('pendingTabEmptyMessage', async () => {
+    mockFetch([
+      { path: '/games/7/glossary/candidates', body: [] },
+      { path: '/games/7/glossary', body: [] },
+    ])
+    renderWithProviders(<GlossaryPanel gameId={7} projectId={1} onClose={() => {}} />)
+    await userEvent.click(await screen.findByRole('tab', { name: '승인 대기' }))
+    expect(await screen.findByText('승인 대기 중인 결정이 없습니다')).toBeInTheDocument()
+  })
 })

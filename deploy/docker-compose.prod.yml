@@ -48,6 +48,19 @@ services:
     mem_limit: 768m
     restart: unless-stopped
 
+  # Chrome 커넥터(MCP). 외부에 포트를 열지 않고 nginx가 프록시한다. 서버 .env의 MCP_TOKEN_SECRET·PUBLIC_URL을 읽는다.
+  mcp:
+    image: gt-mcp:prod
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BACKEND_URL: http://backend:8080
+    mem_limit: 256m
+    depends_on:
+      - backend
+    restart: unless-stopped
+
   frontend:
     image: gt-frontend:prod
     ports:
@@ -62,6 +75,7 @@ services:
     command: ["/bin/sh", "-c", "while :; do sleep 6h; nginx -s reload; done & exec nginx -g 'daemon off;'"]
     depends_on:
       - backend
+      - mcp
     restart: unless-stopped
 
   # Let's Encrypt 인증서 갱신. 만료 30일 전부터 12시간마다 시도한다. 첫 발급은 deploy/setup-https.sh.

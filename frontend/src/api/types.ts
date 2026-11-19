@@ -193,6 +193,12 @@ export type GlossaryMatchMode = 'WHOLE' | 'PARTIAL'
 /** oldKo: SRC+PARTIAL 전용 "지금 번역에서 find를 옮긴 표기". 있으면 원문에 find가 든 행에서만 oldKo → ko로 치환된다. */
 export interface GlossaryEntry { id: number; gameId?: number; kind: GlossaryKind; matchMode: GlossaryMatchMode; find: string; ko: string | null; note: string | null; oldKo: string | null; shared: boolean; updatedAt: string }
 export interface GlossaryRequest { kind: GlossaryKind; matchMode: GlossaryMatchMode; find: string; ko?: string | null; note?: string | null; oldKo?: string | null }
+export interface GlossaryCandidate {
+  id: number; gameId: number; src: string; ko: string; oldKo: string | null; rows: number; reason: string | null
+  source: 'CONNECTOR' | 'COMMAND'; status: string; createdBy: number | null; createdByName: string | null; createdAt: string; conflictKo: string | null
+}
+export interface ApproveCandidateResult { entry: GlossaryEntry; candidate: GlossaryCandidate; closed: number[] }
+export interface GlossaryCandidateEvent { type: 'glossary-candidate'; gameId: number; candidateId: number; status: string }
 export interface GlossarySaveResult { entry: GlossaryEntry; applied: number }
 /** 기존 표기 후보 하나. example.after는 ko를 함께 보냈을 때만 있다. */
 export interface GlossarySuggestCandidate { oldKo: string; rows: number; example: { src: string; before: string; after: string | null } }
@@ -246,9 +252,9 @@ export interface CommandPlan { summary: string | null; kind: 'FIX' | 'CHECK'; op
 export interface CommandPreset { id: number; name: string; ops: OpSpec[] }
 
 /** 변경 내역(설계 2026-09-30). */
-export type ActivityKind = 'EDIT' | 'RETRANSLATE' | 'FIX_TERMS' | 'SHORTEN' | 'GLOSSARY_APPLY' | 'GLOSSARY_EDIT' | 'REVERT' | 'JOSA_FIX' | 'TAG_SPACING' | 'COMMAND_FIX' | 'POLISH' | 'RULE_APPLY'
+export type ActivityKind = 'EDIT' | 'RETRANSLATE' | 'FIX_TERMS' | 'SHORTEN' | 'GLOSSARY_APPLY' | 'GLOSSARY_EDIT' | 'REVERT' | 'JOSA_FIX' | 'TAG_SPACING' | 'COMMAND_FIX' | 'POLISH' | 'RULE_APPLY' | 'CONNECTOR'
 export const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
-  EDIT: '번역 수정', RETRANSLATE: '다시 번역', FIX_TERMS: '용어 치환', SHORTEN: '줄이기', GLOSSARY_APPLY: '단어장 일괄 적용', GLOSSARY_EDIT: '단어장 편집', REVERT: '되돌림', JOSA_FIX: '조사 고침', TAG_SPACING: '태그 띄어쓰기', COMMAND_FIX: '명령으로 고치기', POLISH: 'GPT로 다듬기', RULE_APPLY: '교정 규칙 적용',
+  EDIT: '번역 수정', RETRANSLATE: '다시 번역', FIX_TERMS: '용어 치환', SHORTEN: '줄이기', GLOSSARY_APPLY: '단어장 일괄 적용', GLOSSARY_EDIT: '단어장 편집', REVERT: '되돌림', JOSA_FIX: '조사 고침', TAG_SPACING: '태그 띄어쓰기', COMMAND_FIX: '명령으로 고치기', POLISH: 'GPT로 다듬기', RULE_APPLY: '교정 규칙 적용', CONNECTOR: 'Claude 커넥터',
 }
 export type GlossaryAction = 'ADD' | 'UPDATE' | 'DELETE' | 'SHARE'
 export const GLOSSARY_ACTION_LABEL: Record<GlossaryAction, string> = { ADD: '추가', UPDATE: '수정', DELETE: '삭제', SHARE: '공유' }
@@ -265,8 +271,8 @@ export interface PolishProposal { segmentId: number; before: string; after: stri
 export interface PolishResult { items: PolishProposal[]; kept: number; skipped: { id: number; reason: string }[] }
 /** 일괄 넣기 한 행. base: 제안을 받을 때의 Fix(before) — 그 사이 바뀌었으면 서버가 건너뛴다. */
 export interface SaveBatchItem { segmentId: number; text: string; base: string | null }
-/** propagated: 같은 원문이라 따라 바뀐 행 수. activityIds: 이번에 만든 POLISH 변경 내역(파일마다 하나) — Ctrl+Z에 쓴다. */
-export interface SaveBatchResult { saved: number; skipped: number; propagated: number; activityIds: number[] }
+/** unchanged: 이미 같은 글이라 넣지도 건너뛰지도 않은 행 수. propagated: 같은 원문이라 따라 바뀐 행 수. activityIds: 이번에 만든 POLISH 변경 내역(파일마다 하나) — Ctrl+Z에 쓴다. */
+export interface SaveBatchResult { saved: number; skipped: number; unchanged: number; propagated: number; activityIds: number[]; skippedRows: { id: number; reason: string }[]; finalMarked: number }
 export interface ActivityFeedItem {
   id: number; kind: ActivityKind; reviewer: ReviewerRef | null; createdAt: string; rowCount: number; sheet: string | null
   /** EDIT·RETRANSLATE의 대상 행. 같은 값을 다시 저장해 대상 행엔 판이 없으면 null. */
@@ -311,3 +317,25 @@ export interface RulePreview {
 }
 export interface RuleApplyRequest { checked: { segmentId: number; before: string; after: string }[]; unchecked: number[] }
 export interface RuleApplyResult { applied: number; skippedChanged: number }
+
+/** Claude 제안(커넥터가 보낸 고칠 안, 웹 확인 창에서 체크한 행만 저장). */
+export type ProposalStatus = 'PENDING' | 'APPLIED' | 'DISMISSED' | 'EXPIRED'
+export interface ProposalSummary { id: number; title: string | null; rowCount: number; createdAt: string }
+export interface ProposalRow {
+  segmentId: number; projectId: number | null; fileName: string | null; sheet: string | null; rowNo: number | null; indexLabel: string | null
+  src: string | null; fix: string | null; base: string | null; text: string; reason: string | null; finalReview: boolean; lockedReason: string | null
+  /** 제안이 말한 원문 용어가 이 행 원문에 없다 — 처음엔 체크 꺼짐. */
+  srcMissing: boolean
+}
+export interface ProposalResult { saved: number; unchanged: number; propagated: number; excluded: number[]; skippedRows: { id: number; reason: string }[]; finalMarked: number; activityIds: number[] }
+export interface ProposalDetail {
+  id: number; reviewerId: number; gameId: number; title: string | null; status: ProposalStatus; createdAt: string; decidedAt: string | null
+  rows: ProposalRow[]; result: ProposalResult | null
+  /** 제안이 말한 원문 쪽 용어(없으면 null). */
+  termSrc: string | null
+}
+
+/** Claude 제안(커넥터)이 생겼다/처리됐다. 별도 SSE 이름 `proposal`로 온다(`review`와 섞지 않는다 — 옛 화면이 모양을 몰라 죽는다). */
+export type ProposalEvent =
+  | { type: 'connector-proposal'; proposalId: number; reviewerId: number; gameId: number; status: ProposalStatus }
+  | { type: 'connector-proposal-decided'; proposalId: number; reviewerId: number; gameId: number; status: ProposalStatus }

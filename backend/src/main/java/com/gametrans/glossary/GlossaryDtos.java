@@ -18,6 +18,13 @@ public final class GlossaryDtos {
 
     public record ApplyResult(int applied) {}
 
+    /** 승인 대기 단어장 후보. conflictKo = 그 게임 단어장 (SRC, src) 항목의 ko가 후보 ko와 다를 때 그 값. */
+    public record CandidateDto(Long id, Long gameId, String src, String ko, String oldKo, int rows, String reason, String source,
+                               String status, Long createdBy, String createdByName, Instant createdAt, String conflictKo) {}
+
+    /** 승인 결과: 만들거나 고친 단어장 항목, 승인된 후보, 같이 닫힌(버림 처리된) 같은 원문 후보 id. */
+    public record ApproveCandidateResult(EntryDto entry, CandidateDto candidate, java.util.List<Long> closed) {}
+
     public record CountResult(int count) {}
 
     /** 추천 구절의 지금 번역 하나: 그 표기가 든 행 수와 예문 한 쌍(긴 문장은 잘라 보낸다). */
