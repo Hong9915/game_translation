@@ -83,6 +83,37 @@ const gameRefShape = {
   projectId: z.number().int().optional().describe('파일(프로젝트) id (/review/{projectId})'),
 }
 const getGlossaryShape = { ...gameRefShape, q: z.string().optional().describe('find·ko·note에 든 것만 (대소문자 무시)') }
+const listFilesShape = { gameId: z.number().int().describe('게임 id (/games/{gameId}/…)') }
+const inspectFileShape = {
+  projectId: z.number().int().describe('파일(프로젝트) id (list_files의 projectId)'),
+  offset: z.number().int().min(0).optional().describe('몇 번째 시트부터 (0부터, 기본 0)'),
+  limit: z.number().int().min(1).optional().describe('시트 수 (기본 30, 최대 50)'),
+}
+const normalizeSheetsShape = {
+  projectId: z.number().int().describe('파일(프로젝트) id (list_files의 projectId)'),
+  sheets: z
+    .array(
+      z.object({
+        sheetName: z.string().describe('시트 이름'),
+        headerRow: z.number().int().min(0).optional().describe('헤더 행 번호(1부터). 0이면 헤더 없음. 생략하면 1'),
+        keyCol: z.string().optional().describe('키 열 글자(예: A). 없으면 생략'),
+        pairs: z
+          .array(
+            z.object({
+              srcCol: z.string().describe('원문 열 글자'),
+              enCol: z.string().optional().describe('영어 열 글자'),
+              koCol: z.string().optional().describe('기존 한국어 열 글자. 없으면 새 열에 쓴다'),
+            }),
+          )
+          .min(1)
+          .max(8),
+        srcToSimplified: z.boolean().optional().describe('원문 번체를 간체로 바꿔 읽기'),
+      }),
+    )
+    .min(1)
+    .max(40),
+  replace: z.boolean().optional().describe('이미 정규화한 시트를 다시 만들기(번역·검수가 없는 시트만)'),
+}
 const undoShape = { activityIds: z.array(z.number().int()).min(1).max(50) }
 
 export type FindRowsInput = z.infer<z.ZodObject<typeof findRowsShape>>
@@ -94,6 +125,9 @@ export type ProposalStatusInput = z.infer<z.ZodObject<typeof proposalStatusShape
 export type GameRefInput = z.infer<z.ZodObject<typeof gameRefShape>>
 export type GetGlossaryInput = z.infer<z.ZodObject<typeof getGlossaryShape>>
 export type UndoInput = z.infer<z.ZodObject<typeof undoShape>>
+export type ListFilesInput = z.infer<z.ZodObject<typeof listFilesShape>>
+export type InspectFileInput = z.infer<z.ZodObject<typeof inspectFileShape>>
+export type NormalizeSheetsInput = z.infer<z.ZodObject<typeof normalizeSheetsShape>>
 
 const ok = (out: unknown): CallToolResult => ({ content: [{ type: 'text', text: JSON.stringify(out) }] })
 const fail = (message: string): CallToolResult => ({ isError: true, content: [{ type: 'text', text: message }] })
@@ -313,6 +347,26 @@ export function proposalStatus(ctx: ToolContext, input: ProposalStatusInput): Pr
   })
 }
 
+const INSPECT_DEFAULT = 30
+const INSPECT_MAX = 50
+
+export function listFiles(ctx: ToolContext, input: ListFilesInput): Promise<CallToolResult> {
+  return guard(async () => ok(await ctx.backend.files(input.gameId)))
+}
+
+export function inspectFile(ctx: ToolContext, input: InspectFileInput): Promise<CallToolResult> {
+  return guard(async () =>
+    ok(await ctx.backend.inspect(input.projectId, input.offset ?? 0, Math.min(input.limit ?? INSPECT_DEFAULT, INSPECT_MAX))),
+  )
+}
+
+export function normalizeSheets(ctx: ToolContext, input: NormalizeSheetsInput): Promise<CallToolResult> {
+  return guard(async () => {
+    const { projectId, ...body } = input
+    return ok(await ctx.backend.normalizeSheets(ctx.reviewerId, projectId, body))
+  })
+}
+
 export function registerTools(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
     'list_games',
@@ -422,5 +476,38 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       annotations: { readOnlyHint: true },
     },
     (args) => getGlossary(ctx, args),
+  )
+  server.registerTool(
+    'list_files',
+    {
+      title: '파일 목록',
+      description:
+        '게임에 올린 파일 목록과 파일마다 정규화한 시트 수를 돌려준다. 정규화를 시작할 때 먼저 부른다. 파일 올리기는 사용자가 게임 화면에서 한다.',
+      inputSchema: listFilesShape,
+      annotations: { readOnlyHint: true },
+    },
+    (args) => listFiles(ctx, args),
+  )
+  server.registerTool(
+    'inspect_file',
+    {
+      title: '시트 들여다보기',
+      description:
+        '파일의 시트마다 맨 위 6행(top — 헤더라고 가정하지 않은 원래 행)과 열별 글자 비율(columns: filled·han·hangul·latin·traditional, %)을 돌려준다. 헤더 이름보다 columns를 믿어라: 원문 열은 han이 높은 열, 한국어 열은 hangul이 높은 열이다. top을 보고 헤더 행 번호를 정한다(헤더가 없으면 0). 시트가 많으면 offset·limit으로 나눠 부른다(한 번에 최대 50). canReplace가 null이 아닌 시트는 이미 정규화한 것이다(true면 번역·검수가 없어 다시 정규화할 수 있고, false면 할 수 없다).',
+      inputSchema: inspectFileShape,
+      annotations: { readOnlyHint: true },
+    },
+    (args) => inspectFile(ctx, args),
+  )
+  server.registerTool(
+    'normalize_sheets',
+    {
+      title: '시트 정규화',
+      description:
+        '부르기 전에 inspect_file로 시트를 보고, 계획을 같은 모양끼리 묶은 표(시트 수, 원문 열, 한국어 열, 간체 변환, 예시 시트 이름)로 사용자에게 보여 주고 허락을 받아라. 헷갈리는 시트(원문 후보가 둘, 한자 비율이 낮음, 헤더가 이상함)는 따로 물어라. 한국어 열이 둘(기존과 수정본)로 보이면 최종 리뷰 파일일 수 있으니 정규화하지 말고 웹 정규화 화면에서 하라고 안내한다. 간체 열과 번체 열이 함께 있으면 간체 열을 원문으로 고른다. 원문 열에 traditional이 0보다 크면 srcToSimplified를 켠다. 한 번에 40개 시트까지 — 더 많으면 나눠 부른다. 결과의 status가 NOT_RUN인 시트는 시간이 모자라 하지 않은 것이니 그 시트부터 다시 부른다. 결과의 warnings는 빠짐없이 사용자에게 전한다. "원문이 빈 N행은 X열에 글이 있습니다" 경고가 오면 inspect_file 결과로 X열을 확인해, X열이 같은 원문(예: 같은 줄의 번체판)일 때만 그 시트를 X열 + srcToSimplified로 replace: true를 줘서 다시 정규화한다. 다른 글(설명·메모 등)이면 다시 하지 말고 그대로 두고 사용자에게 알린다. REFUSED·FAILED는 이유를 전한다. replace는 번역·검수가 하나도 없는 시트에만 통한다. 다 끝나면 /games/{gameId}/review 에서 한 표로 검수할 수 있다고 알려 준다.',
+      inputSchema: normalizeSheetsShape,
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    (args) => normalizeSheets(ctx, args),
   )
 }

@@ -168,8 +168,35 @@ public interface SegmentRepository extends JpaRepository<Segment, Long>, JpaSpec
     @Query("select s.id from Segment s where s.projectId = :pid and s.finalMark = true")
     java.util.Set<Long> finalMarkedIds(@Param("pid") Long projectId);
 
+    /**
+     * 그 시트에 사람의 손이 간 흔적이 있나: 체크·비고·담당·교정 메모·조사 무시가 있는 행, 또는 기존 한국어·가져온 것·번역 메모리 말고
+     * 다른 작성자가 쓴 판이 있으면 true. 정규화를 다시 하면 그 흔적이 날아가므로 바꿔치기 전에 본다.
+     */
+    @Query("""
+        select count(s) > 0 from Segment s
+        where s.projectId = :pid and s.sheetName = :sheet
+          and (s.review1 = true or s.review2 = true or s.review3 = true or s.needsCheck = true or s.confirmed = true
+               or s.finalMark = true or s.done = true or coalesce(trim(s.note), '') <> '' or s.assigneeId is not null
+               or s.proofNote is not null or s.josaIgnored = true
+               or exists (select r from TranslationRevision r where r.segmentId = s.id
+                          and r.author not in (com.gametrans.translate.TranslationRevision.Author.EXISTING,
+                                               com.gametrans.translate.TranslationRevision.Author.IMPORTED,
+                                               com.gametrans.translate.TranslationRevision.Author.MEMORY)))
+        """)
+    boolean hasWork(@Param("pid") Long projectId, @Param("sheet") String sheetName);
+
+    /**
+     * 그 시트의 행을 트랜잭션 끝까지 잠근다(select … for update). 잠근 뒤의 {@link #hasWork}는 이미 커밋된 손길을 보고,
+     * 그 뒤의 체크·비고·새 판(segment를 참조하는 insert)은 이 트랜잭션이 끝날 때까지 기다린다.
+     */
+    @Query(value = "select id from segment where project_id = :pid and sheet_name = :sheet for update", nativeQuery = true)
+    List<Long> lockSheet(@Param("pid") Long projectId, @Param("sheet") String sheetName);
+
     /** 설정 없이 행만 남은 시트의 레인 — 행이 최종 리뷰 레인이면 true. */
     boolean existsByProjectIdAndSheetNameAndFinalReviewTrue(Long projectId, String sheetName);
+
+    /** 그 시트에 행이 하나라도 있나(설정이 없어도). */
+    boolean existsByProjectIdAndSheetName(Long projectId, String sheetName);
 
     /** 검수 체크 칸만 쓴다. null인 값은 그대로 둔다(엔티티 통째 저장 금지 — 위 update들과 같은 이유). */
     @Modifying(clearAutomatically = true, flushAutomatically = true) @Transactional

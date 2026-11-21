@@ -32,10 +32,12 @@ public class NormalizeService {
     private final RevisionService revisions;
     private final MemoryService memory;
     private final TermMissService termMiss;
+    private final com.gametrans.text.Simplifier simplifier;
 
     public NormalizeService(ProjectService projects, WorkbookInspector inspector, NormalizeConfigRepository configs,
                             SegmentRepository segments, RevisionService revisions,
-                            MemoryService memory, TermMissService termMiss) {
+                            MemoryService memory, TermMissService termMiss, com.gametrans.text.Simplifier simplifier) {
+        this.simplifier = simplifier;
         this.termMiss = termMiss;
         this.memory = memory;
         this.revisions = revisions;
@@ -46,6 +48,7 @@ public class NormalizeService {
     }
 
     public SheetsResponse sheets(Long projectId, int headerRow) {
+        if (headerRow < 0) throw new IllegalArgumentException("헤더 행은 0(없음) 이상이어야 합니다.");
         Project p = projects.get(projectId);
         byte[] bytes = projects.originalBytes(p);
         List<SheetOption> out = new ArrayList<>();
@@ -62,9 +65,37 @@ public class NormalizeService {
     public NormalizeResponse normalize(Long projectId, NormalizeRequest req) {
         Project p = projects.get(projectId);
         byte[] bytes = projects.originalBytes(p);
-        List<WorkbookInspector.SheetRow> rows;
-        try { rows = inspector.readRows(bytes, req.sheetName(), req.headerRow()); }
-        catch (IllegalArgumentException e) { throw new IllegalArgumentException(e.getMessage()); }
+        try (org.apache.poi.ss.usermodel.Workbook wb = WorkbookInspector.open(bytes)) {
+            normalizeSheet(p, wb, req);
+        } catch (java.io.IOException e) { throw new java.io.UncheckedIOException(e); }
+        // 검수 전용 파일은 용어·번역 단계를 건너뛰고 바로 검수로 간다.
+        projects.bumpStep(projectId, p.isReviewOnly() ? 5 : 3);
+        // 방금 설정한 시트를 보여 준다(미리보기는 그 시트만).
+        return response(projectId, req.sheetName(), 0, com.gametrans.config.Paging.DEFAULT_SIZE);
+    }
+
+    /**
+     * 이미 연 워크북에서 시트 하나를 정규화하고 그 시트의 통계를 돌려준다. 호출한 쪽에 트랜잭션이 없으면
+     * 시트 하나가 한 트랜잭션이다(여러 시트를 한 워크북으로 돌리는 호출자용).
+     */
+    @Transactional
+    public NormalizeStats normalizeSheet(Project p, org.apache.poi.ss.usermodel.Workbook wb, NormalizeRequest req) {
+        return normalizeSheet(p, wb, req, false);
+    }
+
+    /**
+     * refuseIfWorked면(커넥터용) 이 트랜잭션 안에서, 지우기 전에 그 시트 행을 잠그고 검수 흔적을 다시 본다 — 흔적이 있으면
+     * {@link SheetHasWorkException}(트랜잭션은 되돌린다). 앞서 트랜잭션 밖에서 본 검사와 이 사이에 들어온 검수를 지키려는 것.
+     * 웹 화면은 검수한 시트도 다시 정규화할 수 있어야 하므로 false로 부른다.
+     */
+    @Transactional
+    public NormalizeStats normalizeSheet(Project p, org.apache.poi.ss.usermodel.Workbook wb, NormalizeRequest req, boolean refuseIfWorked) {
+        Long projectId = p.getId();
+        if (refuseIfWorked) {
+            segments.lockSheet(projectId, req.sheetName());
+            if (segments.hasWork(projectId, req.sheetName())) throw new SheetHasWorkException(req.sheetName());
+        }
+        List<WorkbookInspector.SheetRow> rows = WorkbookInspector.rowsOf(WorkbookInspector.requireSheet(wb, req.sheetName()), req.headerRow());
         List<NormalizeConfig.ColumnPair> pairs = validatePairs(req.pairs());
 
         NormalizeConfig cfg = configs.findByProjectIdAndSheetName(projectId, req.sheetName()).orElseGet(NormalizeConfig::new);
@@ -73,6 +104,10 @@ public class NormalizeService {
         cfg.setHeaderRow(req.headerRow());
         cfg.setKeyCol(blankToNull(req.keyCol()));
         cfg.setPairs(pairs);
+        cfg.setSheetIndex(wb.getSheetIndex(req.sheetName()));
+        // 값이 없으면 저장된 설정을 그대로 둔다(새 설정이면 false)
+        if (req.srcToSimplified() != null) cfg.setSrcToSimplified(req.srcToSimplified());
+        boolean toSimplified = cfg.isSrcToSimplified();
         // 최종 리뷰 버전(고친 한국어 열이 있는 쌍)은 이미 고친 파일이라 다시 번역·교정하지 않는다.
         boolean finalReview = cfg.isFinalReview();
         cfg.setProofreadExisting(!finalReview && Boolean.TRUE.equals(req.proofreadExisting()));
@@ -104,7 +139,9 @@ public class NormalizeService {
                 s.setIndexLabel(cfg.getSheetName() + "!" + row.rowNo() + (pairs.size() > 1 ? "!" + pair.srcCol() : ""));
                 s.setKeyText(keyIdx == null ? null : blankToNull(cell(row, keyIdx)));
                 String koRaw = koIdx == null ? null : cell(row, koIdx);
+                // 빈칸 판정은 원본 글로 하고, 간체 변환은 원문이 정해진 뒤에 건다
                 String src = srcOrNull(cell(row, srcIdx), koRaw);
+                if (toSimplified) src = simplifier.toSimplified(src);
                 String en = enIdx == null ? null : emptyToNull(cell(row, enIdx));
                 s.setSrcText(src);
                 s.setEnText(en);
@@ -148,10 +185,7 @@ public class NormalizeService {
             if (ko != null) memoryPairs.putIfAbsent(s.getSrcText(), ko);
         }
         memory.rememberAll(projectId, memoryPairs, MemoryEntry.Source.EXISTING, false);
-        // 검수 전용 파일은 용어·번역 단계를 건너뛰고 바로 검수로 간다.
-        projects.bumpStep(projectId, p.isReviewOnly() ? 5 : 3);
-        // 방금 설정한 시트를 보여 준다(미리보기는 그 시트만).
-        return response(projectId, cfg.getSheetName(), 0, com.gametrans.config.Paging.DEFAULT_SIZE);
+        return stats(projectId, cfg.getSheetName());
     }
 
     /**

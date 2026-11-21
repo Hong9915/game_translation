@@ -50,6 +50,8 @@ export interface NormalizeRequest {
   retranslateExisting: boolean
   /** 기존 한국어를 살린 채 번역 단계에서 GPT가 틀린 행만 골라 고친다. retranslateExisting과 함께 켤 수 없다. */
   proofreadExisting?: boolean
+  /** 원문을 간체 중국어로 바꿔 넣는다. 빼면 저장된 값을 그대로 둔다. */
+  srcToSimplified?: boolean
 }
 /** GET .../normalize가 돌려주는 한 시트의 저장된 설정. 모양은 NormalizeRequest와 같다. */
 export type NormalizeConfigDto = NormalizeRequest

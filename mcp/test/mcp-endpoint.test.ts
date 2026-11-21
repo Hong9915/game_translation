@@ -146,7 +146,7 @@ describe('/mcp', () => {
     const list = await request(app).post('/mcp').set(auth).send({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
     expect(list.status).toBe(200)
     const tools = rpcBody(list).result.tools as { name: string; annotations?: { readOnlyHint?: boolean } }[]
-    expect(tools.map((t) => t.name).sort()).toEqual(['find_rows', 'get_glossary', 'list_games', 'proposal_status', 'propose_replace', 'propose_rows', 'read_game_memo', 'save_rows', 'set_note', 'undo'])
+    expect(tools.map((t) => t.name).sort()).toEqual(['find_rows', 'get_glossary', 'inspect_file', 'list_files', 'list_games', 'normalize_sheets', 'proposal_status', 'propose_replace', 'propose_rows', 'read_game_memo', 'save_rows', 'set_note', 'undo'])
     expect(tools.find((t) => t.name === 'find_rows')!.annotations?.readOnlyHint).toBe(true)
   })
 

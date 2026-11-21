@@ -159,7 +159,8 @@ public class WorkspaceService {
     }
 
     /**
-     * 파일 화면의 시트 탭·상태바용 요약. sheets는 항상 정규화 설정 순(설정만 있고 세그먼트가 없는 시트는 0행), 설정 없이
+     * 파일 화면의 시트 탭·상태바용 요약. sheets는 설정한 시트를 워크북 순서(sheet_index, 순번 없는 옛 설정은 뒤에서 설정 순)로
+     * 먼저 두고(설정만 있고 세그먼트가 없는 시트는 0행), 설정 없이
      * 세그먼트만 남은 시트는 그 뒤. total·changed 등 수치는 sheet 파라미터가 있으면 그 시트, 없으면 전체 합.
      */
     public Summary summary(Long projectId, String sheet) {

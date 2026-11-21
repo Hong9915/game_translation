@@ -53,6 +53,34 @@ export interface ReplaceResultBody {
   termCandidate: boolean
 }
 
+export interface FileInfo { projectId: number; fileName: string; reviewOnly: boolean; configuredSheets: number }
+/** 열 하나의 표본 통계. filled는 글이 있는 칸 %, 나머지는 글이 있는 칸 중 % (0~100). */
+export interface ColumnStat { letter: string; filled: number; han: number; hangul: number; latin: number; traditional: number }
+export interface PairGuess { src: string | null; en: string | null; ko: string | null }
+export interface SheetGuess { src: string | null; en: string | null; key: string | null; pairs: PairGuess[] }
+export interface SavedPair {
+  srcCol: string; enCol: string | null; koColMode: string | null; koCol: string | null; koHeader: string | null; fixCol: string | null
+}
+export interface SavedConfig {
+  sheetName: string; headerRow: number; keyCol: string | null; pairs: SavedPair[]
+  retranslateExisting: boolean; proofreadExisting: boolean; srcToSimplified: boolean
+}
+export interface InspectSheet {
+  name: string; index: number; rowCount: number; top: string[][]; columns: ColumnStat[]
+  guess: SheetGuess | null; config: SavedConfig | null; canReplace: boolean | null
+}
+export interface InspectBody { projectId: number; fileName: string; totalSheets: number; offset: number; sheets: InspectSheet[] }
+export interface PlanPair { srcCol: string; enCol?: string; koCol?: string }
+export interface SheetPlan { sheetName: string; headerRow?: number; keyCol?: string; pairs: PlanPair[]; srcToSimplified?: boolean }
+export interface NormalizeSheetsBody { sheets: SheetPlan[]; replace?: boolean }
+export interface NormalizeStats { totalRows: number; normalized: number; skipped: number; withEn: number; kept: number; intentional: number }
+/** status: OK | REFUSED | FAILED | NOT_RUN(30초 안에 못 해서 시작도 안 함). OK가 아니면 stats는 null. */
+export interface SheetResult {
+  sheetName: string; status: 'OK' | 'REFUSED' | 'FAILED' | 'NOT_RUN'; reason: string | null
+  stats: NormalizeStats | null; warnings: string[]
+}
+export interface NormalizeSheetsResult { results: SheetResult[] }
+
 export class BackendError extends Error {
   constructor(public status: number, message: string) {
     super(message)
@@ -76,6 +104,9 @@ export interface BackendClient {
   glossary(gameId: number): Promise<GlossaryEntry[]>
   candidates(gameId: number): Promise<Candidate[]>
   replace(reviewerId: number, body: ReplaceBody): Promise<ReplaceResultBody>
+  files(gameId: number): Promise<FileInfo[]>
+  inspect(projectId: number, offset: number, limit: number): Promise<InspectBody>
+  normalizeSheets(reviewerId: number, projectId: number, body: NormalizeSheetsBody): Promise<NormalizeSheetsResult>
 }
 
 interface AccountBody { accountId: number; disabled: boolean; reviewer: Reviewer | null }
@@ -152,5 +183,10 @@ export function createBackendClient(baseUrl: string, fetchImpl: typeof fetch = f
     glossary: (gameId) => get(`/api/games/${gameId}/glossary?scope=ALL`),
     candidates: (gameId) => get(`/api/games/${gameId}/glossary/candidates`),
     replace: (reviewerId, body) => post('/api/connector/proposals/replace', body, reviewerId),
+    files: (gameId) => get(`/api/connector/games/${gameId}/files`),
+    inspect: (projectId, offset, limit) =>
+      get(`/api/connector/projects/${projectId}/inspect?offset=${offset}&limit=${limit}`),
+    normalizeSheets: (reviewerId, projectId, body) =>
+      post(`/api/connector/projects/${projectId}/normalize`, body, reviewerId),
   }
 }

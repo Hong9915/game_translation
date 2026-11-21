@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { BackendError } from '../src/backend.js'
-import type { BackendClient, BackendRow, SheetInfo } from '../src/backend.js'
+import type { BackendClient, BackendRow, NormalizeSheetsBody, SheetInfo } from '../src/backend.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -14,6 +14,7 @@ function fake(over: Partial<BackendClient> = {}): BackendClient {
     login: unused, account: unused, games: unused, project: unused, sheets: unused, rows: unused,
     saveBatch: unused, notes: unused, undo: unused, propose: unused, proposal: unused,
     memo: unused, glossary: unused, candidates: unused, replace: unused,
+    files: unused, inspect: unused, normalizeSheets: unused,
     ...over,
   }
 }
@@ -419,5 +420,114 @@ describe('tools', () => {
     const res = await callTool(backend, 'proposal_status', { proposalId: 9 })
     expect(res.isError).toBe(true)
     expect((res.content as { text: string }[])[0].text).toBe('제안을 찾을 수 없습니다: 9')
+  })
+
+  describe('normalize tools', () => {
+    const plan = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ sheetName: `S${i}`, pairs: [{ srcCol: 'A', koCol: 'B' }] }))
+    const toolList = async () => {
+      const server = new McpServer({ name: 't', version: '1' })
+      registerTools(server, { backend: fake(), reviewerId: 7 })
+      const [a, b] = InMemoryTransport.createLinkedPair()
+      const client = new Client({ name: 'c', version: '1' })
+      await Promise.all([server.connect(a), client.connect(b)])
+      const tools = (await client.listTools()).tools
+      await client.close()
+      await server.close()
+      return tools
+    }
+
+    it('listFilesReturnsFiles', async () => {
+      const files = [{ projectId: 1, fileName: 'a.xlsx', reviewOnly: false, configuredSheets: 0 }]
+      const res = await callTool(fake({ files: async () => files }), 'list_files', { gameId: 5 })
+      expect(parse(res)).toEqual(files)
+    })
+
+    it('inspectFileClampsLimit', async () => {
+      const seen: number[][] = []
+      const backend = fake({
+        inspect: async (p, o, l) => {
+          seen.push([p, o, l])
+          return { projectId: p, fileName: 'a.xlsx', totalSheets: 0, offset: o, sheets: [] }
+        },
+      })
+      await callTool(backend, 'inspect_file', { projectId: 3, limit: 999 })
+      await callTool(backend, 'inspect_file', { projectId: 3 })
+      expect(seen).toEqual([[3, 0, 50], [3, 0, 30]])
+    })
+
+    it('normalizeSheetsPassesReviewerAndBody', async () => {
+      let seen: unknown[] = []
+      const result = { results: [{ sheetName: 'S0', status: 'OK', reason: null, stats: null, warnings: [] }] }
+      const backend = fake({
+        normalizeSheets: async (r, p, b) => {
+          seen = [r, p, b]
+          return result as never
+        },
+      })
+      const body: NormalizeSheetsBody = { sheets: plan(1), replace: true }
+      const res = await callTool(backend, 'normalize_sheets', { projectId: 3, ...body })
+      expect(seen).toEqual([7, 3, body])
+      expect(parse(res)).toEqual(result)
+    })
+
+    it('normalizeSheetsPassesNotRunThrough', async () => {
+      const result = {
+        results: [
+          { sheetName: 'S0', status: 'OK', reason: null, stats: null, warnings: ['w'] },
+          { sheetName: 'S1', status: 'NOT_RUN', reason: '시간 부족', stats: null, warnings: [] },
+        ],
+      }
+      const res = await callTool(fake({ normalizeSheets: async () => result as never }), 'normalize_sheets', {
+        projectId: 3,
+        sheets: plan(2),
+      })
+      expect(parse(res)).toEqual(result)
+    })
+
+    it('normalizeSheetsRejects41WithoutCallingBackend', async () => {
+      let called = 0
+      const backend = fake({
+        normalizeSheets: async () => {
+          called++
+          return { results: [] }
+        },
+      })
+      const res = await callTool(backend, 'normalize_sheets', { projectId: 3, sheets: plan(41) })
+      expect(res.isError).toBe(true)
+      expect(called).toBe(0)
+    })
+
+    it('normalizeSheetsBackendErrorIsToolError', async () => {
+      const backend = fake({
+        normalizeSheets: async () => {
+          throw new BackendError(400, '시트가 없습니다.')
+        },
+      })
+      const res = await callTool(backend, 'normalize_sheets', { projectId: 3, sheets: plan(1) })
+      expect(res.isError).toBe(true)
+      expect((res.content as { text: string }[])[0].text).toBe('시트가 없습니다.')
+    })
+
+    it('registersThirteenTools', async () => {
+      const names = (await toolList()).map((t) => t.name)
+      expect(names).toHaveLength(13)
+      expect(names).toEqual(expect.arrayContaining(['list_files', 'inspect_file', 'normalize_sheets']))
+    })
+
+    it('normalizeSheetsDescriptionSaysAskFirst', async () => {
+      const d = (await toolList()).find((t) => t.name === 'normalize_sheets')!.description!
+      expect(d).toContain('허락')
+      expect(d).toContain('warnings')
+      expect(d).toContain('NOT_RUN')
+      // 원문이 빈 행 경고: X열이 같은 원문일 때만 다시 정규화하고, 아니면 사용자에게 알린다
+      expect(d).toContain('같은 원문')
+      expect(d).toContain('사용자에게 알린다')
+    })
+
+    it('inspectFileDescriptionMentionsCanReplace', async () => {
+      const d = (await toolList()).find((t) => t.name === 'inspect_file')!.description!
+      expect(d).toContain('canReplace')
+    })
   })
 })

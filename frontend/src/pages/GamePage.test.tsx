@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react'
+import { focusManager } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { mockFetch } from '../test/mockFetch'
@@ -15,6 +16,17 @@ const xlsx = (name: string) => new File(['x'], name, { type: 'application/vnd.op
 const render = () => renderWithProviders(<GamePage />, { route: '/games/3', path: '/games/:gameId' })
 
 describe('GamePage', () => {
+  it('re-reads the file list when the window regains focus', async () => {
+    const { calls } = mockFetch([{ path: '/games/3', body: game }, { path: '/projects', body: projects }])
+    render()
+    await screen.findByText('ItemText_v3.xlsx')
+    const count = () => calls.filter((c) => c.method === 'GET' && c.url.includes('/projects?gameId=3')).length
+    expect(count()).toBe(1)
+    focusManager.setFocused(false)
+    focusManager.setFocused(true)
+    await waitFor(() => expect(count()).toBe(2))
+  })
+
   it('shows the game, lists its files and resumes at the current step', async () => {
     const { calls } = mockFetch([{ path: '/games/3', body: game }, { path: '/projects', body: projects }])
     render()

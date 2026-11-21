@@ -17,11 +17,12 @@ public final class NormalizeDtos {
     public record PairRequest(String srcCol, String enCol, NormalizeConfig.KoColMode koColMode, String koCol, String koHeader, String fixCol) {}
     public record NormalizeRequest(
             @NotBlank String sheetName,
-            @Min(1) int headerRow,
+            @Min(0) int headerRow,
             String keyCol,
             @NotNull List<PairRequest> pairs,
             Boolean retranslateExisting,
-            Boolean proofreadExisting) {}
+            Boolean proofreadExisting,
+            Boolean srcToSimplified) {}
 
     /**
      * kept: 기존 한국어를 그대로 살린 행(번역 대상에서 빠짐). intentional: 예전 정규화가 영어·한국어 모두 N/A라
@@ -31,9 +32,9 @@ public final class NormalizeDtos {
     public record SegmentPreview(Long id, String indexLabel, int pairIndex, String keyText, String srcText, String enText, String existingKoText) {
         public static SegmentPreview of(Segment s) { return new SegmentPreview(s.getId(), s.getIndexLabel(), s.getPairIndex(), s.getKeyText(), s.getSrcText(), s.getEnText(), s.getExistingKoText()); }
     }
-    public record ConfigDto(String sheetName, int headerRow, String keyCol, List<NormalizeConfig.ColumnPair> pairs, boolean retranslateExisting, boolean proofreadExisting) {
+    public record ConfigDto(String sheetName, int headerRow, String keyCol, List<NormalizeConfig.ColumnPair> pairs, boolean retranslateExisting, boolean proofreadExisting, boolean srcToSimplified) {
         public static ConfigDto of(NormalizeConfig c) {
-            return new ConfigDto(c.getSheetName(), c.getHeaderRow(), c.getKeyCol(), c.getPairs(), c.isRetranslateExisting(), c.isProofreadExisting());
+            return new ConfigDto(c.getSheetName(), c.getHeaderRow(), c.getKeyCol(), c.getPairs(), c.isRetranslateExisting(), c.isProofreadExisting(), c.isSrcToSimplified());
         }
     }
     /** 설정한 시트 하나: 그 시트의 설정과 그 시트만의 통계. */

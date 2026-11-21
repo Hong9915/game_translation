@@ -219,4 +219,125 @@ class XlsxExporterTest {
             assertThat(((XSSFCellStyle) s.getRow(1).getCell(3).getCellStyle()).getFillPattern()).isEqualTo(FillPatternType.SOLID_FOREGROUND);
         }
     }
+
+    private static byte[] untouchedBook() throws Exception {
+        try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet s = wb.createSheet("ItemText");
+            Row header = s.createRow(0);
+            header.createCell(0).setCellValue("ItemID"); header.createCell(2).setCellValue("CN"); header.createCell(3).setCellValue("KR");
+            Row r2 = s.createRow(1);
+            r2.createCell(0).setCellValue("IT_1"); r2.createCell(2).setCellValue("原文1"); r2.createCell(3).setCellValue(" 안녕 ");
+            Row r3 = s.createRow(2);
+            r3.createCell(0).setCellValue("IT_2"); r3.createCell(2).setCellValue("原文2");
+            org.apache.poi.xssf.usermodel.XSSFFont bold = wb.createFont();
+            bold.setBold(true);
+            org.apache.poi.xssf.usermodel.XSSFRichTextString rich = new org.apache.poi.xssf.usermodel.XSSFRichTextString("굵게보통");
+            rich.applyFont(0, 2, bold);
+            r3.createCell(3).setCellValue(rich);
+            wb.write(out);
+            return out.toByteArray();
+        }
+    }
+
+    private byte[] exportRows(byte[] bytes, XlsxExporter.ExportRow... rows) {
+        return exporter.write(bytes, List.of(cfg(existingPair("C", "D"))), List.of(rows),
+                new XlsxExporter.Plan(false, false, false), List.of(), List.of());
+    }
+
+    @Test
+    void keepsUntouchedCellWhenTextIsSame() throws Exception {
+        byte[] out = exportRows(untouchedBook(),
+                new XlsxExporter.ExportRow("ItemText", 2, 0, "안녕", false, false),
+                new XlsxExporter.ExportRow("ItemText", 3, 0, "굵게보통", false, false));
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(out))) {
+            Sheet s = wb.getSheet("ItemText");
+            assertThat(s.getRow(1).getCell(3).getStringCellValue()).isEqualTo(" 안녕 ");
+            assertThat(((org.apache.poi.xssf.usermodel.XSSFRichTextString) s.getRow(2).getCell(3).getRichStringCellValue()).numFormattingRuns()).isGreaterThan(0);
+        }
+    }
+
+    @Test
+    void writesWhenTextDiffers() throws Exception {
+        byte[] out = exportRows(untouchedBook(), new XlsxExporter.ExportRow("ItemText", 2, 0, "안녕하세요", false, true));
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(out))) {
+            assertThat(wb.getSheet("ItemText").getRow(1).getCell(3).getStringCellValue()).isEqualTo("안녕하세요");
+        }
+    }
+
+    @Test
+    void stillFillsMarkedCellWhenTextIsSame() throws Exception {
+        byte[] out = exportRows(untouchedBook(),
+                new XlsxExporter.ExportRow("ItemText", 2, 0, "안녕", false, false, true),
+                new XlsxExporter.ExportRow("ItemText", 3, 0, "굵게보통", false, false, true));
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(out))) {
+            Sheet s = wb.getSheet("ItemText");
+            assertThat(s.getRow(1).getCell(3).getStringCellValue()).isEqualTo(" 안녕 ");
+            XSSFCellStyle st = (XSSFCellStyle) s.getRow(1).getCell(3).getCellStyle();
+            assertThat(st.getFillPattern()).isEqualTo(FillPatternType.SOLID_FOREGROUND);
+            assertThat(st.getFillForegroundXSSFColor().getARGBHex()).endsWith("E2F0D9");
+            assertThat(((org.apache.poi.xssf.usermodel.XSSFRichTextString) s.getRow(2).getCell(3).getRichStringCellValue()).numFormattingRuns()).isGreaterThan(0);
+        }
+    }
+
+    /** 2행 D칸에 주어진 글, 3행 D칸에 수식(캐시 글 "공격"), 4행 D칸에 숫자 15. */
+    private static byte[] oddCellsBook(String row2Ko) throws Exception {
+        try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet s = wb.createSheet("ItemText");
+            Row header = s.createRow(0);
+            header.createCell(0).setCellValue("ItemID"); header.createCell(2).setCellValue("CN"); header.createCell(3).setCellValue("KR");
+            Row r2 = s.createRow(1);
+            r2.createCell(2).setCellValue("原文1"); r2.createCell(3).setCellValue(row2Ko);
+            Row r3 = s.createRow(2);
+            r3.createCell(2).setCellValue("原文2");
+            org.apache.poi.ss.usermodel.Cell f = r3.createCell(3);
+            f.setCellFormula("\"공\"&\"격\"");
+            wb.getCreationHelper().createFormulaEvaluator().evaluateFormulaCell(f); // 캐시 값 "공격"을 남긴다
+            Row r4 = s.createRow(3);
+            r4.createCell(2).setCellValue("原文3"); r4.createCell(3).setCellValue(15);
+            wb.write(out);
+            return out.toByteArray();
+        }
+    }
+
+    @Test
+    void writesWhenOnlyATrailingIdeographicSpaceWasRemoved() throws Exception {
+        // 정규화는 trim()으로 읽어 U+3000이 남는다 — 검수자가 그것만 지웠어도 써야 한다
+        byte[] out = exportRows(oddCellsBook("안녕　"), new XlsxExporter.ExportRow("ItemText", 2, 0, "안녕", false, true));
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(out))) {
+            assertThat(wb.getSheet("ItemText").getRow(1).getCell(3).getStringCellValue()).isEqualTo("안녕");
+        }
+        // 그대로면(같은 U+3000) 칸을 건드리지 않는다
+        byte[] same = exportRows(oddCellsBook("안녕　"), new XlsxExporter.ExportRow("ItemText", 2, 0, "안녕　", false, false));
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(same))) {
+            assertThat(wb.getSheet("ItemText").getRow(1).getCell(3).getStringCellValue()).isEqualTo("안녕　");
+        }
+    }
+
+    @Test
+    void keepsAFormulaCellWhoseCachedTextIsTheSame() throws Exception {
+        byte[] out = exportRows(oddCellsBook("안녕"), new XlsxExporter.ExportRow("ItemText", 3, 0, "공격", false, false));
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(out))) {
+            org.apache.poi.ss.usermodel.Cell c = wb.getSheet("ItemText").getRow(2).getCell(3);
+            assertThat(c.getCellType()).isEqualTo(org.apache.poi.ss.usermodel.CellType.FORMULA);
+            assertThat(c.getCellFormula()).isEqualTo("\"공\"&\"격\"");
+        }
+    }
+
+    @Test
+    void keepsANumericCellWhoseTextIsTheSame() throws Exception {
+        byte[] out = exportRows(oddCellsBook("안녕"), new XlsxExporter.ExportRow("ItemText", 4, 0, "15", false, false));
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(out))) {
+            org.apache.poi.ss.usermodel.Cell c = wb.getSheet("ItemText").getRow(3).getCell(3);
+            assertThat(c.getCellType()).isEqualTo(org.apache.poi.ss.usermodel.CellType.NUMERIC);
+            assertThat(c.getNumericCellValue()).isEqualTo(15.0);
+        }
+    }
+
+    @Test
+    void writesIntoMissingCell() throws Exception {
+        byte[] out = exportRows(untouchedBook(), new XlsxExporter.ExportRow("ItemText", 5, 0, "새 글", false, false));
+        try (Workbook wb = WorkbookFactory.create(new ByteArrayInputStream(out))) {
+            assertThat(wb.getSheet("ItemText").getRow(4).getCell(3).getStringCellValue()).isEqualTo("새 글");
+        }
+    }
 }

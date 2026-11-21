@@ -34,7 +34,7 @@ public final class WorkspaceDtos {
                                Long configId, Long projectId, String fileName, boolean finalReview, long finalMark) {}
     /** done: 그 검토자 담당 행 가운데 2차 체크된 수. */
     public record ReviewerSummary(ReviewerRef reviewer, long assigned, long done) {}
-    /** sheets는 항상 프로젝트 전체(정규화 설정 순). 나머지 수치는 sheet 파라미터가 있으면 그 시트, 없으면 전체. */
+    /** sheets는 항상 프로젝트 전체(워크북 순서). 나머지 수치는 sheet 파라미터가 있으면 그 시트, 없으면 전체. */
     public record Summary(List<SheetSummary> sheets, long total, long changed, long review1, long review2, long review3, long needsCheck,
                           long confirmed, long unassigned, List<ReviewerSummary> reviewers, long josa, long josaPending, long finalMark) {}
 }

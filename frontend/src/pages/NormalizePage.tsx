@@ -32,11 +32,15 @@ export function NormalizePage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [headerRow, setHeaderRow] = useState(1)
+  // 저장된 헤더 행을 이미 되살린 시트. 사용자가 헤더 행을 바꿔 설정을 다시 채울 때 저장값으로 되돌리지 않으려고 둔다.
+  const [headerRestoredFor, setHeaderRestoredFor] = useState<string | null>(null)
   const [sheet, setSheet] = useState<string | null>(null)
   const [config, setConfig] = useState<RoleConfig | null>(null)
   const [fix, setFix] = useState<FixMode>('NEW')
   // 최종 리뷰 버전: 이미 고친 한국어 열(수정 한국어)도 읽는다. 켜야만 그 역할을 고를 수 있다.
   const [finalReview, setFinalReview] = useState(false)
+  // 원문을 간체로 바꿔 넣기: 시트마다 저장된 값을 따른다.
+  const [srcToSimplified, setSrcToSimplified] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
@@ -64,7 +68,15 @@ export function NormalizePage() {
     setConfig(saved ? { keyCol: saved.keyCol, pairs: saved.pairs } : configFromGuess(active))
     setFix(saved?.pairs.some((p) => p.koColMode === 'EXISTING') ? 'OVERWRITE' : 'NEW')
     setFinalReview(!!saved?.pairs.some((p) => p.fixCol))
+    setSrcToSimplified(saved?.srcToSimplified ?? false)
+    // 저장된 헤더 행도 되살린다(커넥터는 0·3 등으로 정규화할 수 있다). 시트를 고른 처음 한 번만 —
+    // 사용자가 헤더 행을 바꿔 설정이 비워진 뒤엔 그 값을 지킨다. 저장된 설정이 없는 시트는 지금 값(기본 1)을 둔다.
+    if (saved && headerRestoredFor !== active.name) setHeaderRow(saved.headerRow)
+    setHeaderRestoredFor(active.name)
   }
+  const savedHeaderRow = current.data?.configs.find((c) => c.config.sheetName === sheet)?.config.headerRow
+  // 0~5 밖의 저장된 값(예: 7)도 고를 수 있게 보여 준다
+  const headerOptions = [...new Set([0, 1, 2, 3, 4, 5, headerRow, ...(savedHeaderRow == null ? [] : [savedHeaderRow])])].sort((a, b) => a - b)
   // 덮어쓸 기존 한국어 열이 사라지면 모드를 되돌린다 — 렌더 단계에서 한 번만 참인 보정
   if (config && fix === 'OVERWRITE' && !canOverwrite(config)) {
     setFix('NEW')
@@ -91,7 +103,8 @@ export function NormalizePage() {
     onSuccess: (_v, sheetName) => {
       setConfirmRemove(null)
       qc.invalidateQueries({ queryKey: ['normalize-current', id] })
-      if (sheet === sheetName) { setSheet(null); setConfig(null) }
+      // 헤더 행도 기본값으로 — 지운 시트에서 되살린 값(예: 없음)이 다음 시트에 남으면 안 된다(저장된 설정이 있으면 위 보정이 다시 되살린다)
+      if (sheet === sheetName) { setSheet(null); setConfig(null); setHeaderRow(1); setHeaderRestoredFor(null) }
     },
     onError: (e: Error) => setError(e.message),
   })
@@ -99,7 +112,7 @@ export function NormalizePage() {
   const run = useMutation({
     mutationFn: async () => {
       const res = await api.normalize(id, {
-        sheetName: sheet!, headerRow, keyCol: config!.keyCol, pairs: config!.pairs, retranslateExisting: false,
+        sheetName: sheet!, headerRow, keyCol: config!.keyCol, pairs: config!.pairs, retranslateExisting: false, srcToSimplified,
       } satisfies NormalizeRequest)
       // 정규화가 끝난 뒤에 번역을 건다 — 번역 작업은 백그라운드로 돌고 진행은 리뷰 화면 위 막대가 보여 준다
       if (translate) {
@@ -158,10 +171,10 @@ export function NormalizePage() {
               adding={adding}
               confirmingRemove={confirmRemove}
               removing={removeMutation.isPending}
-              onSelect={(name) => { setSheet(name); setConfig(null); setAdding(false); setConfirmRemove(null); setConfirmRerun(false) }}
+              onSelect={(name) => { setSheet(name); setConfig(null); setHeaderRestoredFor(null); setAdding(false); setConfirmRemove(null); setConfirmRerun(false) }}
               onStartAdd={() => { qc.invalidateQueries({ queryKey: ['normalize-current', id] }); setAdding(true); setConfirmRemove(null) }}
               onCancelAdd={() => setAdding(false)}
-              onPickAdd={(name) => { setSheet(name); setConfig(null); setHeaderRow(1); setAdding(false); setConfirmRerun(false) }}
+              onPickAdd={(name) => { setSheet(name); setConfig(null); setHeaderRow(1); setHeaderRestoredFor(null); setAdding(false); setConfirmRerun(false) }}
               onAskRemove={(name) => setConfirmRemove(name)}
               onCancelRemove={() => setConfirmRemove(null)}
               onConfirmRemove={(name) => removeMutation.mutate(name)}
@@ -170,7 +183,7 @@ export function NormalizePage() {
               헤더 행
               <select aria-label="헤더 행" className={`${inputClass} w-20`} value={headerRow}
                 onChange={(e) => { setHeaderRow(Number(e.target.value)); setConfig(null); setConfirmRerun(false) }}>
-                {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
+                {headerOptions.map((n) => <option key={n} value={n}>{n === 0 ? '없음' : n}</option>)}
               </select>
             </label>
           </div>
@@ -281,6 +294,13 @@ export function NormalizePage() {
               <label className="flex items-start gap-2 border-t border-lineSoft pt-4 text-[13px] text-body">
                 <input type="checkbox" className="mt-0.5" checked={finalReview} onChange={(e) => pickFinal(e.target.checked)} />
                 <span>최종 리뷰 버전 <span className="block text-xs">이미 고친 한국어 열(수정 한국어)도 읽어 Fix로 넣습니다</span></span>
+              </label>
+            )}
+
+            {config && (
+              <label className="flex items-start gap-2 border-t border-lineSoft pt-4 text-[13px] text-body">
+                <input type="checkbox" className="mt-0.5" checked={srcToSimplified} onChange={(e) => setSrcToSimplified(e.target.checked)} />
+                <span>원문을 간체로 바꿔 넣기 <span className="block text-xs">번체 원문을 간체 중국어로 바꿔 정규화합니다</span></span>
               </label>
             )}
 

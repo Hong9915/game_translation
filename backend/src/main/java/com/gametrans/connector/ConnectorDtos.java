@@ -9,6 +9,18 @@ public final class ConnectorDtos {
 
     public record AccountDto(Long accountId, boolean disabled, ReviewerRef reviewer) {}
 
+    /** 게임의 파일 한 줄. configuredSheets는 정규화 설정을 한 시트 수. */
+    public record FileDto(Long projectId, String fileName, boolean reviewOnly, int configuredSheets) {}
+
+    /** 열 하나의 표본 통계(맨 위 300행). filled는 표본 행 중 글이 있는 칸 %, 나머지는 글이 있는 칸 중 % (정수 0~100). */
+    public record ColumnStat(String letter, int filled, int han, int hangul, int latin, int traditional) {}
+
+    /** config·canReplace는 정규화한 시트만(아니면 null). canReplace=false면 이미 작업한 흔적이 있어 다시 만들면 날아간다. */
+    public record InspectSheet(String name, int index, int rowCount, java.util.List<java.util.List<String>> top, java.util.List<ColumnStat> columns,
+                               com.gametrans.xlsx.ColumnGuesser.Guess guess, com.gametrans.normalize.NormalizeDtos.ConfigDto config, Boolean canReplace) {}
+
+    public record InspectResponse(Long projectId, String fileName, int totalSheets, int offset, java.util.List<InspectSheet> sheets) {}
+
     public record SheetDto(Long configId, Long projectId, String fileName, String sheet, boolean finalReview) {}
 
     /** mode: "APPEND"(기본) | "REPLACE". note가 null이면 비고는 건드리지 않고, needsCheck가 null이면 그 체크는 안 바꾼다. */
@@ -41,6 +53,20 @@ public final class ConnectorDtos {
 
     public record ReplaceRequest(Long gameId, Long projectId, String sheet, String find, String replace, String src, String reason, String title,
                                  java.util.List<Long> exceptRowIds) {}
+
+    /** 시트 하나의 정규화 계획. headerRow가 null이면 1, 0이면 헤더 없음. 열 글자는 대소문자 구분 없이 받는다. */
+    public record SheetPlan(String sheetName, Integer headerRow, String keyCol, java.util.List<PlanPair> pairs, Boolean srcToSimplified) {}
+
+    /** koCol이 있으면 그 열의 기존 한국어를 읽고(원본 보존), 없으면 새 열에 쓴다. enCol·koCol은 null 가능. */
+    public record PlanPair(String srcCol, String enCol, String koCol) {}
+
+    public record NormalizeSheetsRequest(java.util.List<SheetPlan> sheets, Boolean replace) {}
+
+    /** status: OK | REFUSED | FAILED | NOT_RUN. OK가 아니면 stats는 null, warnings는 빈 목록. */
+    public record SheetResult(String sheetName, String status, String reason, com.gametrans.normalize.NormalizeDtos.NormalizeStats stats,
+                              java.util.List<String> warnings) {}
+
+    public record NormalizeSheetsResponse(java.util.List<SheetResult> results) {}
 
     public record ReplaceSample(Long rowId, String before, String after) {}
 

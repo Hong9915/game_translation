@@ -74,14 +74,14 @@ class WorkspaceSummaryTest extends IntegrationTest {
     }
 
     @Test
-    void sheetsFollowNormalizeOrderNotAlphabetical() throws Exception {
+    void sheetsFollowWorkbookOrderNotNormalizeOrder() throws Exception {
         long pid = TestProjects.uploadTwoSheets(mvc, TestProjects.freshGame());
-        // Skills를 먼저 설정하면 탭도 Skills가 먼저다 — 검수자가 정한 순서를 지킨다
+        // Skills를 먼저 설정해도 탭은 워크북 순서(Items, Skills)를 따른다(V39 sheet_index)
         mvc.perform(put("/api/projects/{id}/normalize", pid).contentType(MediaType.APPLICATION_JSON).content(TestProjects.sheetNormalize("Skills"))).andExpect(status().isOk());
         mvc.perform(put("/api/projects/{id}/normalize", pid).contentType(MediaType.APPLICATION_JSON).content(TestProjects.sheetNormalize("Items"))).andExpect(status().isOk());
         mvc.perform(get("/api/review/{id}/rows/summary", pid))
-                .andExpect(jsonPath("$.sheets[0].sheet").value("Skills"))
-                .andExpect(jsonPath("$.sheets[1].sheet").value("Items"))
+                .andExpect(jsonPath("$.sheets[0].sheet").value("Items"))
+                .andExpect(jsonPath("$.sheets[1].sheet").value("Skills"))
                 // NEW 열 모드라 기존 한국어도 Fix도 없다 → 수정됨 0
                 .andExpect(jsonPath("$.sheets[0].changed").value(0));
     }

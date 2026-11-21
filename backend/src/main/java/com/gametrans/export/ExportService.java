@@ -161,6 +161,8 @@ public class ExportService {
         copy.setKeyCol(c.getKeyCol());
         copy.setRetranslateExisting(c.isRetranslateExisting());
         copy.setProofreadExisting(c.isProofreadExisting());
+        copy.setSrcToSimplified(c.isSrcToSimplified());
+        copy.setSheetIndex(c.getSheetIndex());
         copy.setPairs(c.getPairs().stream().map(p -> p.koColMode() != NormalizeConfig.KoColMode.EXISTING_TO_NEW ? p
                 : new NormalizeConfig.ColumnPair(p.srcCol(), p.enCol(), NormalizeConfig.KoColMode.EXISTING, p.koCol(), null)).toList());
         return copy;

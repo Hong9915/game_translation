@@ -50,6 +50,10 @@ public class NormalizeConfig {
     private boolean retranslateExisting = false;
     /** true면 기존 한국어를 초벌로 살리고, 번역 단계에서 GPT가 틀린 행만 골라 고친다. retranslateExisting보다 우선한다. */
     private boolean proofreadExisting = false;
+    /** true면 원문을 간체로 바꿔 저장한다(번체 원문 시트). 빈칸 판정은 원본 글로 한다. */
+    private boolean srcToSimplified = false;
+    /** 워크북 안에서 이 시트의 자리(0부터). 옛 행은 null이다. */
+    private Integer sheetIndex;
 
     /** 열 짝 중 하나라도 수정 한국어 열(fixCol)이 있으면 최종 리뷰 시트. */
     public boolean isFinalReview() { return pairs.stream().anyMatch(p -> p.fixCol() != null); }

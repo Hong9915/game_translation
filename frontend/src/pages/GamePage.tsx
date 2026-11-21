@@ -50,7 +50,7 @@ export function GamePage() {
   const [termError, setTermError] = useState<string | null>(null)
 
   const game = useQuery({ queryKey: ['game', gameId], queryFn: () => api.games.get(gameId) })
-  const list = useQuery({ queryKey: ['projects', gameId], queryFn: () => api.projects.list(gameId) })
+  const list = useQuery({ queryKey: ['projects', gameId], queryFn: () => api.projects.list(gameId), refetchOnWindowFocus: true })
   const termRequests = useQuery({ queryKey: ['termRequests', gameId], queryFn: () => api.termRequests.list(gameId) })
   const invalidate = () => { qc.invalidateQueries({ queryKey: ['projects'] }); qc.invalidateQueries({ queryKey: ['games'] }); qc.invalidateQueries({ queryKey: ['game', gameId] }) }
 

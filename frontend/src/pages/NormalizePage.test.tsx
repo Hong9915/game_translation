@@ -281,3 +281,108 @@ describe('NormalizePage v2', () => {
     expect(screen.getByRole('combobox', { name: 'C열 역할' })).toHaveValue('FIX:0')
   })
 })
+
+describe('NormalizePage 간체·헤더 없음', () => {
+  const savedWith = (flag: boolean) => ({
+    ...normalized,
+    configs: [{ ...normalized.configs[0], config: { ...normalized.configs[0].config, srcToSimplified: flag } }],
+  })
+
+  it('shows the simplified checkbox, checked when the saved config has it, and sends it', async () => {
+    const { calls } = mockFetch(routes(savedWith(true)))
+    render()
+    const box = await screen.findByRole('checkbox', { name: /원문을 간체로 바꿔 넣기/ })
+    await waitFor(() => expect(box).toBeChecked())
+    await userEvent.click(screen.getByRole('button', { name: '이 시트 다시 정규화' }))
+    await userEvent.click(await screen.findByRole('button', { name: '다시 정규화' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.find((c) => c.method === 'PUT')!.body).toMatchObject({ srcToSimplified: true })
+  })
+
+  it('sends true when checked and false when not', async () => {
+    const { calls } = mockFetch(routes())
+    render()
+    await screen.findByRole('combobox', { name: 'B열 역할' })
+    const box = screen.getByRole('checkbox', { name: /원문을 간체로 바꿔 넣기/ })
+    expect(box).not.toBeChecked()
+    await userEvent.click(box)
+    await userEvent.click(screen.getByRole('button', { name: '이 시트 정규화' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.find((c) => c.method === 'PUT')!.body).toMatchObject({ srcToSimplified: true })
+  })
+
+  it('sends false by default', async () => {
+    const { calls } = mockFetch(routes())
+    render()
+    await screen.findByRole('combobox', { name: 'B열 역할' })
+    await userEvent.click(screen.getByRole('button', { name: '이 시트 정규화' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.find((c) => c.method === 'PUT')!.body).toMatchObject({ srcToSimplified: false })
+  })
+
+  // 최종 리뷰 I1: 커넥터가 헤더 행 0·3으로 정규화한 시트를 열면 "1"로 보이고, 다시 정규화하면 틀린 헤더 행으로 읽었다.
+  const savedHeader = (headerRow: number) => ({
+    ...normalized,
+    configs: [{
+      ...normalized.configs[0],
+      config: { ...normalized.configs[0].config, headerRow, keyCol: null, srcToSimplified: true },
+    }],
+  })
+
+  it.each([
+    [0, '없음'],
+    [3, '3'],
+    [7, '7'],
+  ])('restores the saved header row %i, keeps the saved pairs, and sends it back', async (row, label) => {
+    const { calls } = mockFetch(routes(savedHeader(row)))
+    render()
+    const select = await screen.findByRole('combobox', { name: '헤더 행' })
+    await waitFor(() => expect(select).toHaveValue(String(row)))
+    expect((within(select).getByRole('option', { selected: true }) as HTMLOptionElement).textContent).toBe(label)
+    // 헤더 행이 바뀌어 시트를 다시 읽어도 저장된 설정(열쇠 열 없음·간체 켬)이 추측값으로 덮이면 안 된다
+    await waitFor(() => expect(calls.some((c) => c.method === 'GET' && c.url.includes(`headerRow=${row}`))).toBe(true))
+    expect(await screen.findByRole('combobox', { name: 'A열 역할' })).toHaveValue('NONE')
+    expect(screen.getByRole('checkbox', { name: /원문을 간체로 바꿔 넣기/ })).toBeChecked()
+    await userEvent.click(screen.getByRole('button', { name: '이 시트 다시 정규화' }))
+    await userEvent.click(await screen.findByRole('button', { name: '다시 정규화' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.find((c) => c.method === 'PUT')!.body).toMatchObject({ headerRow: row, keyCol: null, srcToSimplified: true })
+    expect(select).toHaveValue(String(row))
+  })
+
+  it('keeps header row 1 for a sheet without a saved config', async () => {
+    const { calls } = mockFetch(routes())
+    render()
+    await screen.findByRole('combobox', { name: 'B열 역할' })
+    expect(screen.getByRole('combobox', { name: '헤더 행' })).toHaveValue('1')
+    await userEvent.click(screen.getByRole('button', { name: '이 시트 정규화' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.find((c) => c.method === 'PUT')!.body).toMatchObject({ headerRow: 1 })
+  })
+
+  it('lets the user change the header row of a saved sheet without snapping back', async () => {
+    const { calls } = mockFetch(routes(savedHeader(3)))
+    render()
+    const select = await screen.findByRole('combobox', { name: '헤더 행' })
+    await waitFor(() => expect(select).toHaveValue('3'))
+    await screen.findByRole('combobox', { name: 'A열 역할' })
+    await userEvent.selectOptions(select, '2')
+    await waitFor(() => expect(calls.some((c) => c.method === 'GET' && c.url.includes('headerRow=2'))).toBe(true))
+    await screen.findByRole('combobox', { name: 'A열 역할' })
+    expect(select).toHaveValue('2')
+  })
+
+  it('offers 없음 as the header row and uses row 0', async () => {
+    const { calls } = mockFetch(routes())
+    render()
+    await screen.findByRole('combobox', { name: 'B열 역할' })
+    const select = screen.getByRole('combobox', { name: '헤더 행' })
+    expect((within(select).getAllByRole('option')[0] as HTMLOptionElement).textContent).toBe('없음')
+    await userEvent.selectOptions(select, '0')
+    await waitFor(() => expect(calls.some((c) => c.method === 'GET' && c.url.includes('headerRow=0'))).toBe(true))
+    await userEvent.click(screen.getByRole('button', { name: '이 시트 정규화' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.find((c) => c.method === 'PUT')!.body).toMatchObject({ headerRow: 0 })
+  })
+})
+

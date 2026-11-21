@@ -105,6 +105,10 @@ public final class TestProjects {
                   {"srcCol":"E","enCol":"F","koColMode":"EXISTING","koCol":"G"}]}
         """;
 
+    public static long uploadTraditional(MockMvc mvc, String gameName) throws Exception { return upload(mvc, "Trad.xlsx", TestWorkbooks.traditionalTwoSheets(), gameName); }
+
+    public static long uploadHeaderless(MockMvc mvc, String gameName) throws Exception { return upload(mvc, "Headerless.xlsx", TestWorkbooks.headerless(), gameName); }
+
     public static long uploadTwoSheets(MockMvc mvc, String gameName) throws Exception { return upload(mvc, "MultiSheet.xlsx", TestWorkbooks.twoSheets(), gameName); }
 
     /**

@@ -34,7 +34,11 @@ public class ConnectorController {
     private final ConnectorProposalService proposals;
     private final ConnectorReplaceService replacer;
 
-    public ConnectorController(ConnectorService service, ConnectorProposalService proposals, ConnectorReplaceService replacer) {
+    private final ConnectorNormalizeService normalizer;
+
+    public ConnectorController(ConnectorService service, ConnectorProposalService proposals, ConnectorReplaceService replacer,
+                               ConnectorNormalizeService normalizer) {
+        this.normalizer = normalizer;
         this.service = service;
         this.proposals = proposals;
         this.replacer = replacer;
@@ -45,6 +49,24 @@ public class ConnectorController {
 
     @GetMapping("/games/{gameId}/sheets")
     public List<SheetDto> sheets(@PathVariable Long gameId) { return service.sheets(gameId); }
+
+    /** 게임의 파일 목록(올린 순서). 워크북은 열지 않는다. */
+    @GetMapping("/games/{gameId}/files")
+    public List<ConnectorDtos.FileDto> files(@PathVariable Long gameId) { return normalizer.files(gameId); }
+
+    /** 시트별 맨 위 행·열 통계·헤더 추측을 보여 줘 열 역할을 내용으로 고르게 한다. limit 기본 30, 최대 50. */
+    @GetMapping("/projects/{projectId}/inspect")
+    public ConnectorDtos.InspectResponse inspect(@PathVariable Long projectId, @RequestParam(required = false) Integer offset,
+                                                 @RequestParam(required = false) Integer limit) {
+        return normalizer.inspect(projectId, offset, limit);
+    }
+
+    /** 한 워크북의 여러 시트를 한 번에 정규화한다. 시트마다 결과(OK·REFUSED·FAILED·NOT_RUN)와 경고를 돌려준다. */
+    @PostMapping("/projects/{projectId}/normalize")
+    public ConnectorDtos.NormalizeSheetsResponse normalize(@PathVariable Long projectId, @RequestBody(required = false) ConnectorDtos.NormalizeSheetsRequest req,
+                                                           @RequestHeader(value = "X-Reviewer-Id", required = false) Long reviewerId) {
+        return normalizer.normalize(projectId, req, reviewerId);
+    }
 
     @PostMapping("/notes")
     public List<NoteResult> notes(@RequestBody NotesRequest req, @RequestHeader(value = "X-Reviewer-Id", required = false) Long reviewerId) {

@@ -94,17 +94,29 @@ public class XlsxExporter {
                 Columns cols = resolve(sheet, cfg);
                 int flagIdx = plan.addFlagColumn() ? cols.flagIdx : -1;
 
-                Row header = rowAt(sheet, cfg.getHeaderRow() - 1);
-                for (int i = 0; i < cfg.getPairs().size(); i++) {
-                    NormalizeConfig.ColumnPair pair = cfg.getPairs().get(i);
-                    if (pair.isNew()) cellAt(header, cols.koIdxs.get(i)).setCellValue(pair.headerOrDefault());
+                // 헤더 행이 없는 시트(headerRow 0)에는 머리글 글자를 쓰지 않는다 — 1행은 데이터다.
+                Row header = cfg.getHeaderRow() >= 1 ? rowAt(sheet, cfg.getHeaderRow() - 1) : null;
+                if (header != null) {
+                    for (int i = 0; i < cfg.getPairs().size(); i++) {
+                        NormalizeConfig.ColumnPair pair = cfg.getPairs().get(i);
+                        if (pair.isNew()) cellAt(header, cols.koIdxs.get(i)).setCellValue(pair.headerOrDefault());
+                    }
+                    if (flagIdx >= 0) cellAt(header, flagIdx).setCellValue(FLAG_HEADER);
                 }
-                if (flagIdx >= 0) cellAt(header, flagIdx).setCellValue(FLAG_HEADER);
 
                 for (ExportRow r : bySheet.getOrDefault(cfg.getSheetName(), List.of())) {
                     Row row = rowAt(sheet, r.rowNo() - 1);
-                    Cell ko = cellAt(row, cols.koIdxs.get(r.pairIndex()));
-                    ko.setCellValue(r.ko());
+                    int koIdx = cols.koIdxs.get(r.pairIndex());
+                    // 글이 같은 칸은 다시 쓰지 않는다 — setCellValue는 원본의 앞뒤 공백과 칸 안 서식을 지운다.
+                    // 비교는 cellAt() 앞에서: cellAt()은 inlineStr 칸을 비워 버린다.
+                    Cell existing = row.getCell(koIdx);
+                    Cell ko;
+                    if (existing != null && sameText(existing, r.ko())) {
+                        ko = existing;
+                    } else {
+                        ko = cellAt(row, koIdx);
+                        ko.setCellValue(r.ko());
+                    }
                     if (r.marked()) markFill.apply(ko);
                     else if (r.changed()) highlight.apply(ko);
                     if (flagIdx >= 0 && r.flagged()) cellAt(row, flagIdx).setCellValue(FLAG_VALUE);
@@ -113,7 +125,7 @@ public class XlsxExporter {
                 java.util.Map<Integer, String> sheetNotes = notesByRow(notes, cfg.getSheetName());
                 if (!sheetNotes.isEmpty()) {
                     int noteIdx = plan.addFlagColumn() ? cols.flagIdx + 1 : cols.flagIdx;
-                    cellAt(header, noteIdx).setCellValue(NOTE_HEADER);
+                    if (header != null) cellAt(header, noteIdx).setCellValue(NOTE_HEADER);
                     sheetNotes.forEach((rowNo, text) -> cellAt(rowAt(sheet, rowNo - 1), noteIdx).setCellValue(text));
                 }
             }
@@ -303,6 +315,17 @@ public class XlsxExporter {
     private static void writeRow(Sheet sheet, int rowIdx, String... values) {
         Row row = rowAt(sheet, rowIdx);
         for (int i = 0; i < values.length; i++) cellAt(row, i).setCellValue(values[i]);
+    }
+
+    /**
+     * 칸의 지금 글(보이는 글)과 쓰려는 글이 앞뒤 공백을 떼고 같은가. 빈 칸에 쓸 글이 있으면 같지 않다.
+     * 떼는 방식은 정규화가 칸을 읽을 때(WorkbookInspector.cellsOf의 trim())와 같다 — strip()이면 U+3000·NBSP까지 떼어,
+     * 검수자가 끝의 전각 공백만 지운 수정이 "같다"로 보여 파일에 안 써졌다.
+     */
+    private static boolean sameText(Cell cell, String text) {
+        String want = text == null ? "" : text.trim();
+        if (want.isEmpty()) return false;
+        return want.equals(WorkbookInspector.cellText(cell).trim());
     }
 
     private static Row rowAt(Sheet sheet, int idx) {

@@ -3,10 +3,10 @@
 Claude(Chrome 옆 패널 Cowork 등)가 검수 화면의 행을 찾고·고치고·메모하고·되돌릴 수 있게 하는 MCP 서버입니다. 백엔드 API를 부르는 얇은 층이고, 자체 OAuth 로그인(아이디·비밀번호)을 가집니다.
 
 부르는 백엔드 API:
-- 커넥터 전용 `/api/connector/*`: `login`, `accounts/{id}`(계정 확인), `games/{id}/sheets`, `notes`, `undo`, `proposals`
+- 커넥터 전용 `/api/connector/*`: `login`, `accounts/{id}`(계정 확인), `games/{id}/sheets`, `games/{id}/files`, `projects/{id}/inspect`, `projects/{id}/normalize`, `notes`, `undo`, `proposals`
 - 화면과 같이 쓰는 API: `GET /api/games`, `GET /api/projects/{id}`, `GET /api/games/{id}/review/rows`, `POST /api/segments/save-batch`(`source: "CONNECTOR"`)
 
-도구 열 개: `list_games`, `find_rows`, `save_rows`, `set_note`, `undo`, `propose_rows`, `propose_replace`, `proposal_status`, `read_game_memo`, `get_glossary`.
+도구 열세 개: `list_games`, `find_rows`, `save_rows`, `set_note`, `undo`, `propose_rows`, `propose_replace`, `proposal_status`, `read_game_memo`, `get_glossary`, `list_files`, `inspect_file`, `normalize_sheets`.
 - 확정된 행은 `save_rows`가 건너뛰고(`skipped`, 이유 "확정") 글을 바꾸지 않습니다. 이미 같은 글인 행은 `unchanged`로 셉니다.
 - 최종 리뷰 레인 행을 고치면 최종 수정 표시가 켜집니다.
 - `save_rows`의 저장은 변경 내역에 `CONNECTOR`로 남고, `undo`에 그 id를 주면 되돌립니다(되돌린 결과의 id로 다시 `undo`하면 다시 실행). `undo`는 그 계정이 커넥터로 고친 것만, 한 번에 50개까지 받습니다.
@@ -15,6 +15,9 @@ Claude(Chrome 옆 패널 Cowork 등)가 검수 화면의 행을 찾고·고치�
 - `find_rows`는 src·existingKo·note가 300자를 넘으면 앞 300자 + "…"로 자르고 그 행에 `truncated: true`를 붙입니다. `fix`는 자르지 않습니다. `propose_rows`에서 `base`를 생략하면 서버가 지금 fix로 채웁니다.
 - `proposal_status`는 `propose_rows`·`propose_replace`로 보낸 제안의 결과(대기·저장함·넣지 않음·만료, 저장·건너뜀·체크 뺀 행, `activityIds`)를 돌려줍니다. 자기 계정의 제안만 봅니다.
 - `set_note`(비고·확인 필요)는 변경 내역에 남지 않고 `undo`로 되돌릴 수 없습니다. 비고를 되돌리려면 돌려받은 `before` 값으로 `mode=replace`를 씁니다.
+- `list_files`는 게임의 파일 목록과 파일마다 정규화한 시트 수를 돌려줍니다. 파일 올리기는 웹 게임 화면에서 합니다.
+- `inspect_file`은 시트마다 맨 위 6행과 열별 글자 비율(han·hangul·latin·traditional)을 돌려줍니다(시트 많으면 `offset`·`limit`, 한 번에 50개까지). `canReplace`가 null이 아니면 이미 정규화한 시트입니다.
+- `normalize_sheets`는 시트별 계획(헤더 행·열 짝·간체 변환)으로 한 번에 40개 시트까지 정규화합니다. 결과 `status`는 OK·REFUSED·FAILED·NOT_RUN(30초 안에 못 해서 시작 안 함)이고 `warnings`를 그대로 돌려줍니다. `replace: true`는 번역·검수가 없는 시트만 다시 만듭니다.
 
 ## 환경 변수
 

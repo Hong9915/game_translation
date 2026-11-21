@@ -10,6 +10,7 @@ flowchart LR
   A[게임 고르기] --> B["파일 올리기<br/>xlsx·csv, 폴더째"] --> C["열 정하기<br/>원문·한국어 열"] --> D[엑셀식 검수] --> E["내보내기<br/>xlsx·zip"]
   D -.- T["단어장 · 표기 갈림 · 조사 검사<br/>명령으로 고치기 · 교정 규칙 · 변경 내역"]
   CL["Claude<br/>MCP 커넥터"] -.->|제안 → 체크 창| D
+  CL -.->|시트 들여다보고 열 정하기| C
 ```
 
 ## 무엇을 할 수 있나
@@ -59,6 +60,9 @@ flowchart LR
 | 도구 | 하는 일 |
 |---|---|
 | `list_games` | 게임 목록. 검수 화면 주소의 id가 보이면 부르지 않는다 |
+| `list_files` | 게임의 파일 목록(올린 파일, 정규화한 시트 수) |
+| `inspect_file` | 파일의 시트마다 맨 위 행·열별 한자/한글/번체 비율을 보여 열 역할을 내용으로 고르게 한다(쪽으로 나눠 읽음) |
+| `normalize_sheets` | 시트 여러 개(한 번에 최대 40)를 열 지정대로 정규화. 번체 원문은 간체로 바꾸고, 이미 검수한 시트는 거절한다 |
 | `find_rows` | 파일·게임에서 행 찾기(원문·기존·Fix·비고, 레인별). 긴 원문·비고는 300자로 자르고 Fix는 자르지 않는다 |
 | `read_game_memo` | 게임 메모(고객 요청·문체 규칙)를 글로 읽기 |
 | `get_glossary` | 단어장 확정 표기 + 승인 대기 후보 |
@@ -68,6 +72,41 @@ flowchart LR
 | `save_rows` | 사용자 허락을 받고 체크 창 없이 바로 저장 |
 | `set_note` | 비고·확인 필요 표시 |
 | `undo` | 커넥터로 저장한 것 되돌리기 |
+
+**시트가 많은 파일 정규화** — 올리기는 게임 화면에서 한다. 그다음 Claude에게 "이 게임 정규화해 줘"라고 하면 `list_files` → `inspect_file`로 시트를 훑고, 열 역할을 시트마다 묶은 표로 보여 주어 확인받는다.
+확인하면 `normalize_sheets`가 정규화하고(호출당 시간 제한이 있어 못 한 시트는 이어서 부른다), 끝나면 게임 전체 리뷰에서 시트 전부를 한 표로 검수한다. 시트 순서는 원본 워크북 순서 그대로다.
+
+```mermaid
+sequenceDiagram
+  actor R as 검수자
+  participant C as Claude
+  participant M as MCP 서버
+  participant B as 백엔드
+  R->>B: 웹에서 파일·폴더 올리기
+  R->>C: "이 게임 정규화해 줘"
+  C->>M: list_files · inspect_file
+  M->>B: /api/connector/…/files · inspect
+  B-->>C: 시트마다 맨 위 행 · 열별 한자/한글/번체 비율
+  C->>R: 시트별 헤더 행 · 원문/한국어 열 표
+  R->>C: 확인
+  loop 못 한 시트(NOT_RUN)가 남는 동안
+    C->>M: normalize_sheets (최대 40시트)
+    M->>B: /api/connector/…/normalize
+    B-->>C: 시트별 OK · REFUSED · FAILED · NOT_RUN
+  end
+  R->>B: 게임 전체 리뷰에서 한 표로 검수 → 원본 형태로 내보내기
+```
+
+왜 만들었고 무엇을 지키나:
+
+| 문제 | 해결 | 결과 |
+|---|---|---|
+| 시트가 104개이고 헤더 위치·열 배치가 시트마다 달라, 손으로 하나씩 열을 고르거나 한 시트로 합쳤다 되돌리는 스크립트를 돌려야 했다 | Claude가 시트별 통계를 보고 헤더 행과 원문·한국어 열을 정해 여러 시트를 한 번에 정규화한다 | 96개 시트를 호출 5번, 약 61초. 합치기·되돌리기 없이 게임 전체를 한 표로 검수하고 원본 워크북에 그대로 써서 내보낸다 |
+| 시트마다 워크북을 다시 열어 101개 시트에 160초, 큰 시트 하나에 37초가 걸렸다 | 호출당 워크북을 한 번만 연다. 호출 하나는 40시트·30초까지이고, 넘친 시트는 `NOT_RUN`으로 돌려보내 이어서 부르게 한다. 워크북은 한 번에 하나만 연다 | 가장 긴 호출 38초, 힙 최고 955MB(상한 2GB) |
+| 정규화는 시트의 행을 지우고 다시 만든다. AI가 잘못 부르면 검수한 번역이 사라진다 | 번역·검수 흔적(고친 번역·체크·비고·담당)이 있는 시트는 커넥터가 거절한다. 다시 정규화(`replace: true`)는 흔적이 없을 때만 되고, 지우기 직전 같은 트랜잭션에서 행을 잠근 뒤 다시 확인한다. 시트마다 따로 커밋한다 | 실패한 시트는 이전 행이 그대로 남는다. 웹 정규화 화면의 동작은 바뀌지 않았다 |
+| 번체 원문 시트가 섞여 있다 | OpenCC `tw2s`를 Java로 옮긴 변환기로 원문을 간체로 바꿔 넣는다. 번체 글자가 없는 칸은 손대지 않는다 | 실제 OpenCC와 번체가 든 30,369칸 중 2칸만 다르다(사전 판 차이). 내보내기는 원문 칸을 쓰지 않아 원본 워크북에는 번체가 그대로 남는다 |
+
+시트 104개·약 3.5만 행 파일 기준(104개 중 96개를 정규화한 수치 — 나머지 8개는 원문 열이 없는 작은 시트라 보내지 않았다. 2026-11-21, 프로드와 같은 힙 2GB): 정규화 약 61초(호출 5번, 가장 긴 호출 38초), 리뷰 첫 쪽 0.07초, 내보내기 3.8초. 검수 전 내보내기는 원본과 142,099칸이 모두 같다.
 
 **번역**
 - 기본 번역 엔진은 **DeepL**이다. 게임 단어장을 DeepL 용어집으로, 게임별 지시문을 함께 보낸다.
@@ -82,9 +121,9 @@ flowchart LR
   U[브라우저<br/>React 19] -->|요청| N["nginx<br/>HTTPS · 팀 비밀번호"]
   CL["Claude<br/>claude.ai · Chrome 패널"] -->|"/mcp · OAuth 로그인<br/>(팀 비밀번호 없음)"| N
   N -->|/api| B["Spring Boot 백엔드<br/>검수 API · 작업 실행기 · xlsx"]
-  N -->|/mcp · /authorize · /token| M["MCP 서버<br/>TypeScript · 도구 10개<br/>상태 없는 OAuth(JWT)"]
+  N -->|/mcp · /authorize · /token| M["MCP 서버<br/>TypeScript · 도구 13개<br/>상태 없는 OAuth(JWT)"]
   M -->|/api/connector · 내부망| B
-  B -->|모든 데이터| P[("PostgreSQL 16<br/>Flyway V1–V38")]
+  B -->|모든 데이터| P[("PostgreSQL 16<br/>Flyway V1–V39")]
   B ==>|기본 번역| D["DeepL Pro<br/>단어장 용어집 · 게임별 지시문"]
   B -->|명령으로 고치기 · 다듬기 · 글 종류 판단 · 단어장 초안| O[OpenAI<br/>gpt-5 · gpt-5-mini]
   B -->|조사 검사 · 태그 띄어쓰기 · 내부망| J["josa 사이드카<br/>Python · Kiwi"]
@@ -112,6 +151,7 @@ flowchart TD
   T --> R["검수 → 고친 한국어 · 표시<br/><code>workspace · review · command · josa · activity</code>"]
   C["교정 규칙 → 문체 · 마침표 · 태그 띄어쓰기<br/><code>rules · josa</code>"] -->|미리 보기 → 적용| R
   CL["Claude 제안 → 체크 창에서 저장<br/><code>connector</code>"] -->|저장| R
+  CL -->|시트 들여다보기 → 여러 시트 정규화| N
   R --> E["내보내기 → .xlsx · .zip<br/><code>export · xlsx</code>"]
   G[("단어장<br/><code>glossary</code>")] -->|DeepL 용어집| T
   G -->|일괄 적용 · 불일치 필터| R
@@ -131,8 +171,8 @@ flowchart TD
 | 열 정하기 | `normalize`(열 쌍 → `segments` 행) · `xlsx`(읽기·쓰기·열 추측·CSV) |
 | 번역 | `job`(백그라운드 작업·진행 SSE) · `translate`(파일·행·빠른 번역, 여러 행 다시 번역·GPT 다듬기, 길이 줄이기, 수정 이력) · `deepl` · `llm`(OpenAI·tool loop·사용량) · `memory`(번역 메모리) |
 | 검수 | `workspace`(그리드 조회, 게임 전체 검수) · `review`(표시·담당·동일 원문 동기화·실시간·접속자) · `reviewer` · `command`(명령으로 고치기·전체 길이 줄이기) · `josa`(조사 검사·태그 띄어쓰기) · `rules`(교정 규칙: 글 종류 판단·문체 변환·마침표·미리 보기·적용) · `activity`(변경 내역·되돌리기·Ctrl+Z) |
-| Claude 커넥터 | `connector`(커넥터 계정·로그인, 제안 만들기·체크 창 저장·넣지 않음, 찾아 바꾸기 제안, 커넥터 되돌리기) |
-| 용어 | `glossary`(단어장·분류·표기 갈림·추천·요청양식·승인 대기 후보) · `text`(용어·조사·길이·자리표시자 검사) |
+| Claude 커넥터 | `connector`(커넥터 계정·로그인, 파일 목록·시트 들여다보기·여러 시트 정규화, 제안 만들기·체크 창 저장·넣지 않음, 찾아 바꾸기 제안, 커넥터 되돌리기) |
+| 용어 | `glossary`(단어장·분류·표기 갈림·추천·요청양식·승인 대기 후보) · `text`(용어·조사·길이·자리표시자 검사, 번체→간체 변환) |
 | 내보내기 | `export`(xlsx·zip, 최종 수정분만, 내보낸 버전) |
 | 공통 | `config` · `common` · `health` |
 
@@ -149,7 +189,7 @@ flowchart TD
 | 게임 메모 `/games/:gameId/memo` (새 창) | `/api/games/{id}/memo` | game |
 | 단어장 추천 `/games/:gameId/glossary/recommend` | `/api/games/{gameId}/glossary/recommend` | glossary |
 | 단어장 요청 `/games/:gameId/glossary/requests/:requestId` | `/api/games/{gameId}/glossary/requests`, `/api/glossary/requests/{id}` | glossary |
-| Claude 커넥터 (claude.ai → `/mcp`) | MCP 서버 → `/api/connector/…`(login · proposals · proposals/replace · notes · undo), 화면과 같은 `rows`·`save-batch` | connector · workspace · translate · activity |
+| Claude 커넥터 (claude.ai → `/mcp`) | MCP 서버 → `/api/connector/…`(login · games/{id}/files · projects/{id}/inspect · projects/{id}/normalize · proposals · proposals/replace · notes · undo), 화면과 같은 `rows`·`save-batch` | connector · normalize · xlsx · workspace · translate · activity |
 | 체크 창 · 단어장 승인 대기 (검수 화면) | `/api/connector/proposals/{id}`(apply · dismiss), `/api/games/{gameId}/glossary/candidates`, `/api/glossary/candidates/{id}`(approve · dismiss) | connector · glossary |
 | 내보내기 (게임·검수 화면 버튼) | `/api/projects/{id}/export` | export · xlsx |
 
@@ -202,6 +242,8 @@ cd mcp && npm install && npm test
 
 - **열 쌍**: 시트마다 원문 열 → 한국어 열(선택으로 영어 열) 목록을 정한다. 헤더 접미사(`_CN/_EN/_KR`, `中文/英文/韩语`)로 자동 추측한다.
   쌍이 여러 개면(이름·설명 등) 한 번에 처리해 파일 하나로 받는다.
+- **헤더 행**: 시트마다 헤더가 몇째 행인지 정한다. 헤더가 없는 시트는 "없음"으로 두면 첫 행부터 데이터로 읽는다.
+- **번체 원문**: "원문을 간체로 바꿔 넣기"를 켜면 번체 원문을 간체로 바꿔 정규화한다. 내보낼 때 원문 칸은 원본 그대로 둔다.
 - **이미 한국어가 있는 파일**: 기존 한국어는 "기존 번역"으로 들어와 그대로 검수한다. 한국어·영어 칸이 `N/A`·`-` 같은 표시여도
   행을 건너뛰지 않는다(2026-10-29부터).
 - **CSV·TSV**: 내부에서 시트 하나짜리 xlsx로 처리하고 다시 CSV(UTF-8 BOM)로 내보낸다. 인코딩은 UTF-8 → MS949 → GB18030 순으로 판별한다.

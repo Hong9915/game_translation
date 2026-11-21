@@ -32,14 +32,21 @@ public class WorkbookInspector {
             List<SheetHeaders> out = new ArrayList<>();
             for (int i = 0; i < wb.getNumberOfSheets(); i++) {
                 Sheet s = wb.getSheetAt(i);
-                Row row = s.getRow(headerRow - 1);
                 List<List<String>> preview = new ArrayList<>();
                 for (int r = headerRow; r < headerRow + PREVIEW_ROWS; r++) {
                     Row data = s.getRow(r);
                     if (data == null) continue;
                     preview.add(cellsOf(data));
                 }
-                out.add(new SheetHeaders(s.getSheetName(), s.getPhysicalNumberOfRows(), row == null ? List.of() : cellsOf(row), preview));
+                List<String> headers;
+                if (headerRow == 0) {
+                    // 헤더 없는 시트: 미리보기에서 가장 넓은 행의 폭만큼 빈 칸으로 채워 열 글자만 고르게 한다
+                    int width = preview.stream().mapToInt(List::size).max().orElse(0);
+                    headers = new ArrayList<>(java.util.Collections.nCopies(width, ""));
+                } else {
+                    headers = headerOf(s, headerRow);
+                }
+                out.add(new SheetHeaders(s.getSheetName(), s.getPhysicalNumberOfRows(), headers, preview));
             }
             return out;
         } catch (IOException e) { throw new UncheckedIOException(e); }
@@ -59,8 +66,7 @@ public class WorkbookInspector {
     public List<String> headerCells(byte[] bytes, String sheetName, int headerRow) {
         try (Workbook wb = open(bytes)) {
             Sheet s = requireSheet(wb, sheetName);
-            Row row = s.getRow(headerRow - 1);
-            return row == null ? List.of() : cellsOf(row);
+            return headerOf(s, headerRow);
         } catch (IOException e) { throw new UncheckedIOException(e); }
     }
 
@@ -80,7 +86,9 @@ public class WorkbookInspector {
         return out;
     }
 
+    /** headerRow 0은 헤더 없음 — 빈 목록. */
     public static List<String> headerOf(Sheet s, int headerRow) {
+        if (headerRow < 1) return List.of();
         Row row = s.getRow(headerRow - 1);
         return row == null ? List.of() : cellsOf(row);
     }

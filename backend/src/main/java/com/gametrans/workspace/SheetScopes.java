@@ -38,9 +38,13 @@ public class SheetScopes {
         return new SheetScope(p.getGame().getId(), List.of(new SheetRef(configId, projectId, sheet, fin)), fin);
     }
 
-    /** 파일 하나 전체(설정 순). 파일 화면의 시트 없는 요약 등에 쓴다. */
+    /** 파일 하나 전체(워크북 시트 순, 순번 없는 설정은 뒤에서 설정 순). 파일 화면의 시트 없는 요약 등에 쓴다. */
     public List<SheetRef> projectSheets(Long projectId) {
-        return configs.findByProjectIdOrderByIdAsc(projectId).stream().map(c -> new SheetRef(c.getId(), projectId, c.getSheetName(), c.isFinalReview())).toList();
+        // 워크북 안 자리(sheet_index) 순, 순번 없는 옛 설정은 뒤에서 id 순
+        return configs.findByProjectIdOrderByIdAsc(projectId).stream()
+                .sorted(Comparator.comparing(NormalizeConfig::getSheetIndex, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(NormalizeConfig::getId))
+                .map(c -> new SheetRef(c.getId(), projectId, c.getSheetName(), c.isFinalReview())).toList();
     }
 
     /** 게임의 설정된 시트 전부, 게임 순서(파일 업로드 순 → 설정 순). */

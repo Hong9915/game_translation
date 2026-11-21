@@ -106,6 +106,32 @@ public final class TestWorkbooks {
         } catch (IOException e) { throw new UncheckedIOException(e); }
     }
 
+    /** 번체 원문 시험용: 시트 A(騎士·开启), 시트 B(裡面). 헤더는 简体/韩语. */
+    public static byte[] traditionalTwoSheets() {
+        try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            write(wb.createSheet("A"), new String[][]{
+                {"简体", "韩语"},
+                {"騎士", "기사"},
+                {"开启", "열기"},
+            });
+            write(wb.createSheet("B"), new String[][]{
+                {"简体", "韩语"},
+                {"裡面", "안"},
+            });
+            wb.write(out);
+            return out.toByteArray();
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
+    /** 헤더 없는 시트: 1행부터 데이터. */
+    public static byte[] headerless() {
+        try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            write(wb.createSheet("S"), new String[][] {{"开始", "시작"}, {"结束", "끝"}});
+            wb.write(out);
+            return out.toByteArray();
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
     private static void write(Sheet s, String[][] rows) {
         for (int r = 0; r < rows.length; r++) {
             Row row = s.createRow(r);
